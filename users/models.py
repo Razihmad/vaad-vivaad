@@ -15,8 +15,8 @@ class UserProfile(models.Model):
     bio = models.TextField()
     losses = models.IntegerField(default=0)
     streak = models.IntegerField(default=0)
+    xp = models.IntegerField(default=0)
     profile_pic = models.ImageField(upload_to="user_profiles/", null=True, blank=True)
-    # optional for later
     is_bot = models.BooleanField(default=False)
 
     def __str__(self):

@@ -242,7 +242,7 @@ def end_turn(*, user: User, debate_id: int) -> Optional[Round]:
     selectors.mark_round_ended(round_obj=current_round, ended_at=timezone.now())
     group_name = f"debate_{debate.id}"
     start_judgement_of_debate_and_share_result.apply_async(
-        args=[debate.id, group_name], countdown=20
+        args=[debate.id, group_name], countdown=3
     )
     return None
 
@@ -288,7 +288,7 @@ def _advance_after_turn(
     if not next_blocks:
         group_name = f"debate_{debate.id}"
         start_judgement_of_debate_and_share_result.apply_async(
-            args=[debate.id, group_name], countdown=20
+            args=[debate.id, group_name], countdown=3
         )
         return None
     next_type, next_order = next_blocks[0]
@@ -313,10 +313,16 @@ def _build_transcript(debate: Debate) -> str:
         "",
     ]
     for r in selectors.get_rounds_for_debate_ordered(debate=debate):
-        lines.append(f"[Round {r.order} — {r.round_type}]")
-        for msg in selectors.get_messages_for_debate_round_ordered(round_obj=r):
-            side = "Pro" if msg.user == debate.user_pro else "Con"
-            lines.append(f"{side}: {msg.content}")
+        if r.round_type == RoundType.OPENING:
+            lines.append("[OPENING — independent statements, written simultaneously, neither saw the other's before writing]")
+            for msg in selectors.get_messages_for_debate_round_ordered(round_obj=r):
+                side = "Pro" if msg.user == debate.user_pro else "Con"
+                lines.append(f"{side}: {msg.content}")
+        else:
+            lines.append("[REBUTTAL — sequential replies, each message is a direct response to what came before]")
+            for i, msg in enumerate(selectors.get_messages_for_debate_round_ordered(round_obj=r), start=1):
+                side = "Pro" if msg.user == debate.user_pro else "Con"
+                lines.append(f"[{i}] {side}: {msg.content}")
         lines.append("")
     return "\n".join(lines)
 
@@ -354,14 +360,60 @@ def dispute_judgement(*, user: User, debate_id: int) -> Judgement:
         ) from e
 
 
+def force_end_debate(*, debate_id: int) -> bool:
+    """Close the active round so the judge can run. Returns True if it did work.
+
+    Uses select_for_update inside an atomic block to prevent both players'
+    simultaneous time_expired events from each triggering a separate judge run.
+    """
+    with transaction.atomic():
+        debate = selectors.get_debate_by_id(debate_id=debate_id)
+        if not debate or debate.status != DebateStatus.ONGOING:
+            logger.info("[JUDGE] force_end_debate: debate %s not ONGOING, skip", debate_id)
+            return False
+        current_round = (
+            Round.objects.select_for_update()
+            .filter(debate=debate, ended_at__isnull=True)
+            .order_by("order")
+            .first()
+        )
+        if not current_round:
+            logger.info("[JUDGE] force_end_debate: no open round for debate %s, skip", debate_id)
+            return False
+        selectors.mark_round_ended(round_obj=current_round, ended_at=timezone.now())
+        logger.info("[JUDGE] force_end_debate: closed round %s for debate %s", current_round.id, debate_id)
+        return True
+
+
 def auto_judge_debate(*, debate_id: int) -> Optional[Judgement]:
     """Called automatically at the end of every debate round sequence."""
+    logger.info("[JUDGE] auto_judge_debate called — debate=%s", debate_id)
     debate = selectors.get_debate_by_id(debate_id=debate_id)
-    if not debate or debate.status != DebateStatus.ONGOING:
+    if not debate:
+        logger.warning("[JUDGE] debate %s not found", debate_id)
         return None
+    if debate.status != DebateStatus.ONGOING:
+        logger.warning("[JUDGE] debate %s has status=%s, expected ONGOING — skipping", debate_id, debate.status)
+        return None
+    existing = Judgement.objects.filter(debate=debate).first()
+    if existing:
+        logger.info("[JUDGE] debate %s already judged — skipping duplicate run", debate_id)
+        return existing
+    logger.info("[JUDGE] building transcript and calling judge — debate=%s", debate_id)
     try:
         data = _call_judge(debate=debate)
-        return selectors.apply_judgement_outcome(debate=debate, data=data)
+        judgement = selectors.apply_judgement_outcome(debate=debate, data=data)
+        logger.info(
+            "[JUDGE] debate=%s | winner=%s | pro_total=%.1f | con_total=%.1f | reasoning=%r",
+            debate.id,
+            judgement.winner.username if judgement.winner else "draw",
+            judgement.argument_score_pro + judgement.rebuttal_score_pro
+            + judgement.clarity_score_pro + judgement.persuasion_score_pro,
+            judgement.argument_score_con + judgement.rebuttal_score_con
+            + judgement.clarity_score_con + judgement.persuasion_score_con,
+            data.get("reasoning", "")[:120],
+        )
+        return judgement
     except Exception as e:
         logger.error(
             "Auto judging failed for debate %s: %s", debate.id, e, exc_info=True

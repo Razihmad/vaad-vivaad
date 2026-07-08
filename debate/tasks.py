@@ -21,11 +21,16 @@ def send_advance_round_event(group_name: str, data: dict) -> None:
 
 @shared_task
 def start_judgement_of_debate_and_share_result(debate_id: int, group_name: str):
+    import logging
     from debate.services import auto_judge_debate
+    log = logging.getLogger(__name__)
 
+    log.info("[JUDGE TASK] starting — debate=%s group=%s", debate_id, group_name)
     judgement = auto_judge_debate(debate_id=debate_id)
     if not judgement:
+        log.warning("[JUDGE TASK] auto_judge_debate returned None — debate=%s", debate_id)
         return
+    log.info("[JUDGE TASK] judgement created, sending to group=%s", group_name)
     channel_layer = get_channel_layer()
     async_to_sync(channel_layer.group_send)(
         group_name,
@@ -34,6 +39,7 @@ def start_judgement_of_debate_and_share_result(debate_id: int, group_name: str):
             "data": JudgementSerializer(judgement).data,
         },
     )
+    log.info("[JUDGE TASK] group_send complete — debate=%s", debate_id)
 
 
 @shared_task

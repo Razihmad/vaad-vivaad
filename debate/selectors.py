@@ -316,6 +316,20 @@ def apply_judgement_outcome(*, debate: Debate, data: dict) -> Judgement:
     winner_overall = overall_pro if data["winner"] == "pro" else overall_con
     loser_overall = overall_con if data["winner"] == "pro" else overall_pro
 
+    # ELO: winner gains, loser loses — both scaled by their avg score (1–10).
+    # XP: always positive; winner earns full value, loser earns half (participation).
+    winner_elo = round(winner_overall)
+    loser_elo   = round(loser_overall)
+    winner_xp   = max(5, round(winner_overall * 10))
+    loser_xp    = max(3, round(loser_overall * 5))
+
+    # Store per-side deltas so the result screen can show accurate numbers.
+    pro_is_winner = data["winner"] == "pro"
+    rating_delta_pro = winner_elo  if pro_is_winner else -loser_elo
+    rating_delta_con = -loser_elo  if pro_is_winner else  winner_elo
+    xp_delta_pro     = winner_xp   if pro_is_winner else  loser_xp
+    xp_delta_con     = loser_xp    if pro_is_winner else  winner_xp
+
     judgement = Judgement.objects.create(
         debate=debate,
         winner=winner_user,
@@ -329,6 +343,10 @@ def apply_judgement_outcome(*, debate: Debate, data: dict) -> Judgement:
         persuasion_score_con=data["con"]["persuasion_score"],
         overall_score_pro=overall_pro,
         overall_score_con=overall_con,
+        rating_delta_pro=rating_delta_pro,
+        rating_delta_con=rating_delta_con,
+        xp_delta_pro=xp_delta_pro,
+        xp_delta_con=xp_delta_con,
         reasoning=data["reasoning"],
         strongest_moment=data["strongest_moment"],
         coaching_tip_pro=data["coaching_tip_pro"],
@@ -342,8 +360,10 @@ def apply_judgement_outcome(*, debate: Debate, data: dict) -> Judgement:
     update_user_profile_after_debate(
         winner_id=winner_user.id,
         loser_id=loser_user.id,
-        winner_elo_delta=round(winner_overall),
-        loser_elo_delta=round(loser_overall),
+        winner_elo_delta=winner_elo,
+        loser_elo_delta=loser_elo,
+        winner_xp_delta=winner_xp,
+        loser_xp_delta=loser_xp,
     )
 
     return judgement

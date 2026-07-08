@@ -113,6 +113,11 @@ class Judgement(models.Model):
     overall_score_pro = models.FloatField(default=0)
     overall_score_con = models.FloatField(default=0)
 
+    rating_delta_pro = models.IntegerField(default=0)
+    rating_delta_con = models.IntegerField(default=0)
+    xp_delta_pro     = models.IntegerField(default=0)
+    xp_delta_con     = models.IntegerField(default=0)
+
     reasoning = models.TextField()
     strongest_moment = models.TextField()
     coaching_tip_pro = models.TextField()

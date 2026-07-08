@@ -39,14 +39,25 @@ def register_device(
 
 
 def update_user_profile(
-    *, user_id: int, username: str, bio: str, name: str, profile_pic=None
+    *, user_id: int, username: str = None, bio: str = None, name: str = None, profile_pic=None
 ):
-    first, _, last = name.strip().partition(" ")
-    User.objects.filter(id=user_id).update(
-        username=username, first_name=first, last_name=last
-    )
+    user_updates = {}
+    if username is not None:
+        user_updates["username"] = username
+    if name is not None:
+        first, _, last = name.strip().partition(" ")
+        user_updates["first_name"] = first
+        user_updates["last_name"] = last
+    if user_updates:
+        User.objects.filter(id=user_id).update(**user_updates)
+
     profile = UserProfile.objects.get(user_id=user_id)
-    profile.bio = bio
+    profile_fields = []
+    if bio is not None:
+        profile.bio = bio
+        profile_fields.append("bio")
     if profile_pic is not None:
         profile.profile_pic = profile_pic
-    profile.save(update_fields=["profile_pic", "bio"])
+        profile_fields.append("profile_pic")
+    if profile_fields:
+        profile.save(update_fields=profile_fields)

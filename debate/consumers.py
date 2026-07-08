@@ -121,6 +121,7 @@ class DebateConsumer(AsyncWebsocketConsumer):
             "join_viewer": self.handle_join_viewer,
             "viewer_left": self.viewer_left,
             "viewer_reaction": self.add_viewer_reaction,
+            "time_expired": self.handle_time_expired,
             "debate_completed": self.handle_debate_completed,
         }
 
@@ -342,6 +343,26 @@ class DebateConsumer(AsyncWebsocketConsumer):
                 {"type": "message.new", "message": event.get("message", {})}
             )
         )
+
+    async def handle_time_expired(self, event_data: dict):
+        """Client timer hit zero — close the open round and trigger the judge."""
+        if not self.debate_id or not self.debate_group_name:
+            return
+        debate_id   = self.debate_id
+        group_name  = self.debate_group_name
+
+        from debate.services import force_end_debate
+        from debate.tasks import start_judgement_of_debate_and_share_result
+
+        logger.info("[WS] time_expired received — debate=%s user=%s", debate_id, self.user.id)
+        did_end = await database_sync_to_async(force_end_debate)(debate_id=debate_id)
+        if did_end:
+            logger.info("[WS] force_end_debate succeeded — queuing judge — debate=%s", debate_id)
+            start_judgement_of_debate_and_share_result.apply_async(
+                args=[debate_id, group_name], countdown=1
+            )
+        else:
+            logger.info("[WS] force_end_debate skipped (already ended?) — debate=%s", debate_id)
 
     async def handle_join_viewer(self, data: Dict):
         debate_id = data.get("debate_id")
