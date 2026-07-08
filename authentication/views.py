@@ -31,6 +31,7 @@ class GoogleLogin(APIView):
             message="Login successful",
             data={
                 "is_new_user": is_created,
+                "username": user.username,
                 "access_token": access_token,
                 "refresh_token": refresh_token,
             },
@@ -50,6 +51,7 @@ class GoogleLoginCallback(APIView):
             message="Login successful",
             data={
                 "is_new_user": is_created,
+                "username": user.username,
                 "access_token": access_token,
                 "refresh_token": refresh_token,
             },
@@ -77,6 +79,7 @@ class DevLoginView(APIView):
             message="Login successful",
             data={
                 "is_new_user": False,
+                "username": user.username,
                 "access_token": access_token,
                 "refresh_token": refresh_token,
             },
