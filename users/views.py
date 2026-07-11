@@ -12,7 +12,7 @@ from users.serializers import (
     UserFeedbackSerializer,
     UserProfileSerializer,
 )
-from users.selectors import get_user_feedbacks, get_user_profile
+from users.selectors import get_leaderboard, get_user_feedbacks, get_user_profile
 from users.services import (
     add_topic_comment,
     create_feedback,
@@ -103,6 +103,23 @@ class TopicCommentView(APIView):
             message="Comment submitted",
             data={"comment": TopicCommentSerializer(comment).data},
         )
+
+
+class LeaderboardView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    @handle_exception
+    def get(self, request):
+        timeframe = request.query_params.get("timeframe", "all_time")
+        if timeframe not in ("weekly", "all_time"):
+            return status_400(message="timeframe must be 'weekly' or 'all_time'")
+        profiles = get_leaderboard(timeframe=timeframe)
+        players = [
+            {"rank": i + 1, **UserProfileSerializer(profile).data}
+            for i, profile in enumerate(profiles)
+        ]
+        return status_200(message="Leaderboard fetched", data={"players": players})
 
 
 class DeviceRegistrationView(APIView):

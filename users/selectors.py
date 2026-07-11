@@ -2,6 +2,11 @@ from typing import List
 
 from django.contrib.auth.models import User
 from django.db import models
+from django.utils import timezone
+from datetime import timedelta
+
+from debate.constants import DebateStatus
+from debate.models import Debate
 from users.models import (
     ApplicationConfig,
     TopicComment,
@@ -9,6 +14,8 @@ from users.models import (
     UserFeedback,
     UserProfile,
 )
+
+WEEKLY_WINDOW = timedelta(days=7)
 
 
 def get_user_profile(*, user_id: int) -> UserProfile:
@@ -55,6 +62,21 @@ def get_application_config_by_name(*, name: str) -> ApplicationConfig:
 
 def get_user_by_id(*, user_id: int) -> User:
     return User.objects.filter(id=user_id).first()
+
+
+def get_weekly_active_user_ids() -> set[int]:
+    since = timezone.now() - WEEKLY_WINDOW
+    debates = Debate.objects.filter(status=DebateStatus.COMPLETED, completed_at__gte=since)
+    pro_ids = debates.values_list("user_pro_id", flat=True)
+    con_ids = debates.values_list("user_con_id", flat=True)
+    return set(pro_ids) | set(con_ids)
+
+
+def get_leaderboard(*, timeframe: str) -> List[UserProfile]:
+    qs = UserProfile.objects.select_related("user")
+    if timeframe == "weekly":
+        qs = qs.filter(user_id__in=get_weekly_active_user_ids())
+    return list(qs.order_by("-elo_rating"))
 
 
 def update_user_profile_after_debate(
