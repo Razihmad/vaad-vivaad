@@ -109,6 +109,8 @@ class JudgementSerializer(serializers.ModelSerializer):
             "rebuttal_score_con",
             "clarity_score_con",
             "persuasion_score_con",
+            "overall_score_pro",
+            "overall_score_con",
             "xp_delta_pro",
             "xp_delta_con",
             "reasoning",
