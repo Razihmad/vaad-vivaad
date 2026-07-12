@@ -5,8 +5,8 @@ from debate.models import Topic, Debate, Round, Message, MatchQueue, Category
 
 @admin.register(Topic)
 class TopicAdmin(ModelAdmin):
-    list_display = ("title", "description", "category", "is_active")
-    list_filter = ("is_active", "category")
+    list_display = ("title", "description", "category", "is_active", "is_trending")
+    list_filter = ("is_active", "is_trending", "category")
     search_fields = ("title", "description")
 
 

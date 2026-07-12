@@ -80,16 +80,24 @@ def get_leaderboard(*, timeframe: str) -> List[UserProfile]:
 
 
 def update_user_profile_after_debate(
-    *, winner_id: int, loser_id: int, winner_elo_delta: int, loser_elo_delta: int
+    *,
+    winner_id: int,
+    loser_id: int,
+    winner_elo_delta: int,
+    loser_elo_delta: int,
+    winner_xp_delta: int = 0,
+    loser_xp_delta: int = 0,
 ) -> None:
     UserProfile.objects.filter(user_id=winner_id).update(
         elo_rating=models.F("elo_rating") + winner_elo_delta,
+        xp=models.F("xp") + winner_xp_delta,
         wins=models.F("wins") + 1,
         total_debates=models.F("total_debates") + 1,
         streak=models.F("streak") + 1,
     )
     UserProfile.objects.filter(user_id=loser_id).update(
         elo_rating=models.F("elo_rating") - loser_elo_delta,
+        xp=models.F("xp") + loser_xp_delta,
         losses=models.F("losses") + 1,
         total_debates=models.F("total_debates") + 1,
         streak=0,

@@ -23,7 +23,7 @@ class TopicSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Topic
-        fields = ["id", "title", "description", "category", "background_image"]
+        fields = ["id", "title", "description", "category", "background_image", "is_trending"]
 
 
 class MessageSerializer(serializers.ModelSerializer):
@@ -109,6 +109,8 @@ class JudgementSerializer(serializers.ModelSerializer):
             "rebuttal_score_con",
             "clarity_score_con",
             "persuasion_score_con",
+            "xp_delta_pro",
+            "xp_delta_con",
             "reasoning",
             "strongest_moment",
             "coaching_tip_pro",

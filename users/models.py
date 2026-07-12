@@ -10,6 +10,7 @@ from users.constants import DeviceType, FeedbackType
 class UserProfile(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="profile")
     elo_rating = models.IntegerField(default=1200)
+    xp = models.IntegerField(default=0)
     total_debates = models.IntegerField(default=0)
     wins = models.IntegerField(default=0)
     bio = models.TextField()

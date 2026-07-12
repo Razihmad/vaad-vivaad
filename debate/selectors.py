@@ -316,6 +316,15 @@ def apply_judgement_outcome(*, debate: Debate, data: dict) -> Judgement:
     winner_overall = overall_pro if data["winner"] == "pro" else overall_con
     loser_overall = overall_con if data["winner"] == "pro" else overall_pro
 
+    winner_elo_delta = round(winner_overall)
+    loser_elo_delta = round(loser_overall)
+
+    # Simple placeholder formula: XP earned equals each side's own overall
+    # score (1-10), same scale the judge already produces. Always earned,
+    # even on a loss — only the amount differs.
+    xp_delta_pro = round(overall_pro)
+    xp_delta_con = round(overall_con)
+
     judgement = Judgement.objects.create(
         debate=debate,
         winner=winner_user,
@@ -329,6 +338,8 @@ def apply_judgement_outcome(*, debate: Debate, data: dict) -> Judgement:
         persuasion_score_con=data["con"]["persuasion_score"],
         overall_score_pro=overall_pro,
         overall_score_con=overall_con,
+        xp_delta_pro=xp_delta_pro,
+        xp_delta_con=xp_delta_con,
         reasoning=data["reasoning"],
         strongest_moment=data["strongest_moment"],
         coaching_tip_pro=data["coaching_tip_pro"],
@@ -339,11 +350,16 @@ def apply_judgement_outcome(*, debate: Debate, data: dict) -> Judgement:
     debate.completed_at = timezone.now()
     debate.save(update_fields=["status", "winner", "completed_at"])
 
+    winner_xp_delta = xp_delta_pro if data["winner"] == "pro" else xp_delta_con
+    loser_xp_delta = xp_delta_con if data["winner"] == "pro" else xp_delta_pro
+
     update_user_profile_after_debate(
         winner_id=winner_user.id,
         loser_id=loser_user.id,
-        winner_elo_delta=round(winner_overall),
-        loser_elo_delta=round(loser_overall),
+        winner_elo_delta=winner_elo_delta,
+        loser_elo_delta=loser_elo_delta,
+        winner_xp_delta=winner_xp_delta,
+        loser_xp_delta=loser_xp_delta,
     )
 
     return judgement

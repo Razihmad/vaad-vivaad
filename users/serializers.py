@@ -17,6 +17,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
         fields = [
             "user",
             "elo_rating",
+            "xp",
             "total_debates",
             "wins",
             "losses",
