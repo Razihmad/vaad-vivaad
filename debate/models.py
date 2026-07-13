@@ -35,6 +35,8 @@ class Topic(models.Model):
         upload_to="topic_backgrounds/", null=True, blank=True
     )
     icon = models.ImageField(upload_to="topic_icon/", null=True, blank=True)
+    pro_context = models.TextField(null=True, blank=True)
+    con_context = models.TextField(null=True, blank=True)
     is_active = models.BooleanField(default=True)
     is_trending = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
