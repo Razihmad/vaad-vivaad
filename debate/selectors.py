@@ -374,6 +374,59 @@ def update_debate_status(*, debate_id: int, status: DebateStatus) -> None:
     Debate.objects.filter(id=debate_id).update(status=status)
 
 
+def abandon_ongoing_debate(*, debate_id: int) -> bool:
+    """Marks a still in-progress debate ABANDONED. Returns False (no-op) if the
+    debate had already left MATCHED/ONGOING, e.g. it was already judged/completed."""
+    return bool(
+        Debate.objects.filter(
+            id=debate_id, status__in=[DebateStatus.MATCHED, DebateStatus.ONGOING]
+        ).update(status=DebateStatus.ABANDONED)
+    )
+
+
+def _disconnect_field_for_user(*, debate: Debate, user_id: int) -> str:
+    return (
+        "user_pro_disconnected_at"
+        if debate.user_pro_id == user_id
+        else "user_con_disconnected_at"
+    )
+
+
+def set_participant_disconnected_at(
+    *, debate: Debate, user_id: int, disconnected_at: datetime
+) -> None:
+    field = _disconnect_field_for_user(debate=debate, user_id=user_id)
+    Debate.objects.filter(id=debate.id).update(**{field: disconnected_at})
+
+
+def clear_participant_disconnected_at(*, debate_id: int, user_id: int) -> None:
+    debate = get_debate_by_id(debate_id=debate_id)
+    if not debate:
+        return
+    field = _disconnect_field_for_user(debate=debate, user_id=user_id)
+    Debate.objects.filter(id=debate_id).update(**{field: None})
+
+
+def get_participant_disconnected_at(
+    *, debate_id: int, user_id: int
+) -> Optional[datetime]:
+    debate = get_debate_by_id(debate_id=debate_id)
+    if not debate:
+        return None
+    field = _disconnect_field_for_user(debate=debate, user_id=user_id)
+    return getattr(debate, field)
+
+
+def get_active_debate_for_participant(*, user_id: int) -> Debate | None:
+    return (
+        Debate.objects.select_related("topic", "user_pro", "user_con", "winner")
+        .filter(Q(user_pro_id=user_id) | Q(user_con_id=user_id))
+        .filter(status__in=[DebateStatus.MATCHED, DebateStatus.ONGOING])
+        .order_by("-started_at")
+        .first()
+    )
+
+
 def update_match_queue_status(
     *, user_id: int, status: MatchQueueStatus, debate_id: int
 ) -> None:

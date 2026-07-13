@@ -19,11 +19,14 @@ from debate.serializers import (
     RoundSerializer,
 )
 from debate.services import (
+    DISCONNECT_GRACE_SECONDS,
     join_queue_outcome,
     check_and_add_user_reaction,
     create_debate_viewer,
     end_turn,
     get_pro_or_con,
+    handle_ongoing_debate_disconnect,
+    rejoin_active_debate,
     submit_message_and_maybe_advance,
     leave_queue,
     schedule_bot_response_if_needed,
@@ -53,16 +56,26 @@ class DebateConsumer(AsyncWebsocketConsumer):
 
     Client → Server events:
         {"type": "message", "data": {"content": "..."}}
-        {"type": "join_queue", "data": {"topic_id": <int>}}
+        {"type": "join_queue", "data": {"topic_id": <int>}}  # also used to rejoin an
+                                                              # ongoing debate after a
+                                                              # reconnect — see below
         {"type": "debate_completed"}   # client signals its round sequence has finished
 
     Server → Client events:
-        {"type": "queue.matched", "data": {"debate": {...}}}   # match found
+        {"type": "queue.matched", "data": {"debate": {...}}}   # match found (also sent
+                                                                # to both sides on rejoin)
         {"type": "queue.waiting", "data": {"queue_id", "topic"}}  # wait for opponent
         {"type": "message.new",     "message":  {...}}
         {"type": "round.advanced",  "round":    {...}}
         {"type": "debate.judging"}
         {"type": "debate.completed","judgement": {...}}
+        {"type": "opponent.disconnected", "data": {
+            "debate_id": <int>, "user_id": <int>, "abandoned": <bool>,
+            "grace_seconds": <int|null>,  # set when the debate is only pending
+                                          # abandonment — the opponent has this long to
+                                          # reconnect (send join_queue again) before the
+                                          # debate is abandoned and judged as-is
+        }}
         {"type": "error",           "message":  "..."}
     """
 
@@ -91,6 +104,7 @@ class DebateConsumer(AsyncWebsocketConsumer):
             return
         await self.handle_leave_queue({})
         await self.viewer_left(data={"status": DebateViewerStatus.DISCONNECTED})
+        await self.handle_participant_disconnect(close_code)
         if getattr(self, "debate_group_name", None):
             await self.channel_layer.group_discard(
                 self.debate_group_name, self.channel_name
@@ -100,6 +114,45 @@ class DebateConsumer(AsyncWebsocketConsumer):
                 self.user_group_name, self.channel_name
             )
         logger.info(f"disconnected {close_code=}")
+
+    async def handle_participant_disconnect(self, close_code):
+        """Covers a participant's socket closing mid-debate (``handle_leave_queue`` can't
+        reach an ONGOING debate: once matched, the user's MatchQueue row is MATCHED not
+        PENDING, so ``leave_queue`` always raises and that path is a no-op here).
+
+        close_code 1000 is a clean close — the client deliberately closed the socket
+        (e.g. the user tapped "leave debate") — so we abandon immediately. Any other
+        code (or an abrupt drop with no close frame at all) is treated as a lost
+        connection: we give the client ``DISCONNECT_GRACE_SECONDS`` to reconnect and
+        rejoin (via ``join_queue``) before abandoning.
+        """
+        if self.is_viewer or not self.debate_id or not self.debate_group_name:
+            return
+        outcome = await database_sync_to_async(handle_ongoing_debate_disconnect)(
+            user=self.user,
+            debate_id=self.debate_id,
+            group_name=self.debate_group_name,
+            graceful=close_code == 1000,
+        )
+        if outcome == "noop":
+            return
+        logger.info(
+            f"debate {self.debate_id}: user {self.user.id} disconnected ({close_code=}) -> {outcome}"
+        )
+        await self.channel_layer.group_send(
+            self.debate_group_name,
+            {
+                "type": "opponent.disconnected",
+                "data": {
+                    "debate_id": self.debate_id,
+                    "user_id": self.user.id,
+                    "abandoned": outcome == "abandoned",
+                    "grace_seconds": DISCONNECT_GRACE_SECONDS
+                    if outcome == "grace_period"
+                    else None,
+                },
+            },
+        )
 
     async def _send_error(self, message: str):
         await self.send(text_data=json.dumps({"type": "error", "message": message}))
@@ -223,8 +276,26 @@ class DebateConsumer(AsyncWebsocketConsumer):
             return
         await self.send(text_data=json.dumps({"type": "opponent.typing"}))
 
+    async def opponent_disconnected(self, event):
+        """Forward disconnect notification to the client, skipping the disconnecter."""
+        data = event.get("data", {})
+        if data.get("user_id") == self.user.id:
+            return
+        await self.send(
+            text_data=json.dumps({"type": "opponent.disconnected", "data": data})
+        )
+
     @websocket_catch_service_exception(default_message="Could not join the queue")
     async def handle_join_queue(self, event_data: dict):
+        # Reconnecting mid-debate (e.g. within the disconnect grace window) takes
+        # priority over fresh matchmaking — rejoin the existing debate instead.
+        rejoin_outcome = await database_sync_to_async(rejoin_active_debate)(
+            user=self.user
+        )
+        if rejoin_outcome:
+            await self.process_join_queue_outcome(rejoin_outcome)
+            return
+
         topic_id = int(event_data.get("topic_id", 0))
         pro_or_con = event_data.get("pro_or_con")
         category_id = event_data.get("category_id", 0)

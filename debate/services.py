@@ -43,6 +43,7 @@ logger = logging.getLogger(__name__)
 
 BOT_USERNAME = getattr(settings, "DEBATE_BOT_USERNAME", "vaad_bot")
 BOT_QUEUE_WAIT_SECONDS = getattr(settings, "BOT_QUEUE_WAIT_SECONDS", 60)
+DISCONNECT_GRACE_SECONDS = getattr(settings, "DISCONNECT_GRACE_SECONDS", 20)
 
 JUDGE_MODEL_DEFAULT = "claude-haiku-4-5-20251001"
 JUDGE_MODEL_ESCALATION = "claude-sonnet-4-6"
@@ -355,9 +356,13 @@ def dispute_judgement(*, user: User, debate_id: int) -> Judgement:
 
 
 def auto_judge_debate(*, debate_id: int) -> Optional[Judgement]:
-    """Called automatically at the end of every debate round sequence."""
+    """Called automatically at the end of every debate round sequence, and also to
+    judge whatever transcript exists after a debate is abandoned mid-way."""
     debate = selectors.get_debate_by_id(debate_id=debate_id)
-    if not debate or debate.status != DebateStatus.ONGOING:
+    if not debate or debate.status not in (
+        DebateStatus.ONGOING,
+        DebateStatus.ABANDONED,
+    ):
         return None
     try:
         data = _call_judge(debate=debate)
@@ -379,6 +384,79 @@ def schedule_debate_judgement(*, debate_id: int, group_name: str) -> None:
     start_judgement_of_debate_and_share_result.apply_async(
         args=[debate_id, group_name], countdown=5
     )
+
+
+# ── Disconnect handling ──────────────────────────────────────────────────────
+
+
+def abandon_debate_and_schedule_judgement(*, debate_id: int, group_name: str) -> None:
+    """Ends a MATCHED/ONGOING debate early — a participant left or dropped for good.
+    Marks it ABANDONED and judges whatever transcript exists so far, same as a natural
+    end of round sequence."""
+    if not selectors.abandon_ongoing_debate(debate_id=debate_id):
+        return
+    if selectors.judgement_exists_for_debate(debate_id=debate_id):
+        return
+    start_judgement_of_debate_and_share_result.apply_async(
+        args=[debate_id, group_name], countdown=5
+    )
+
+
+def handle_ongoing_debate_disconnect(
+    *, user: User, debate_id: int, group_name: str, graceful: bool
+) -> str:
+    """Called when a participant's WebSocket for an ONGOING debate closes.
+
+    ``graceful`` (a clean close, e.g. the client deliberately left) abandons the debate
+    immediately. Anything else (lost internet, app killed, tab crash) only starts a
+    grace-period countdown — the debate is abandoned only if the user hasn't rejoined by
+    the time ``abandon_debate_if_still_disconnected`` fires.
+
+    Returns "abandoned", "grace_period", or "noop" so the consumer knows what, if
+    anything, to tell the opponent.
+    """
+    debate = selectors.get_debate_by_id(debate_id=debate_id)
+    if not debate or debate.status not in (DebateStatus.MATCHED, DebateStatus.ONGOING):
+        return "noop"
+    if user.id not in (debate.user_pro_id, debate.user_con_id):
+        return "noop"
+
+    if graceful:
+        abandon_debate_and_schedule_judgement(
+            debate_id=debate_id, group_name=group_name
+        )
+        return "abandoned"
+
+    disconnected_at = timezone.now()
+    selectors.set_participant_disconnected_at(
+        debate=debate, user_id=user.id, disconnected_at=disconnected_at
+    )
+    from debate.tasks import abandon_debate_if_still_disconnected
+
+    abandon_debate_if_still_disconnected.apply_async(
+        args=[debate_id, user.id, disconnected_at.isoformat(), group_name],
+        countdown=DISCONNECT_GRACE_SECONDS,
+    )
+    return "grace_period"
+
+
+def rejoin_active_debate(*, user: User) -> Optional[dict]:
+    """If the user already has a MATCHED/ONGOING debate — e.g. their app reconnected
+    within the disconnect grace period — clears their pending disconnect marker and
+    returns the same shape ``join_queue_outcome`` returns for a fresh match, so the
+    consumer can reuse ``process_join_queue_outcome`` to rejoin the debate group."""
+    debate = selectors.get_active_debate_for_participant(user_id=user.id)
+    if not debate:
+        return None
+    selectors.clear_participant_disconnected_at(debate_id=debate.id, user_id=user.id)
+    opponent_id = (
+        debate.user_con_id if user.id == debate.user_pro_id else debate.user_pro_id
+    )
+    return {
+        "outcome": "matched",
+        "opponent_id": opponent_id,
+        "debate": DebateListSerializer(debate).data,
+    }
 
 
 def join_queue_outcome(
