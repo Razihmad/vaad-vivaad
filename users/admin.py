@@ -2,7 +2,7 @@ from django.contrib import admin
 from unfold.admin import ModelAdmin
 
 # Register your models here.
-from users.models import UserDevice, UserProfile, ApplicationConfig
+from users.models import UserDevice, UserProfile, ApplicationConfig, TopicComment
 
 
 @admin.register(UserDevice)
@@ -26,3 +26,10 @@ class ApplicationConfigAdmin(ModelAdmin):
     list_display = ("name", "properties", "is_active")
     search_fields = ("name",)
     list_filter = ("is_active",)
+
+
+@admin.register(TopicComment)
+class TopicCommentAdmin(ModelAdmin):
+    list_display = ("topic", "user", "comment", "side")
+    search_fields = ("topic", "user", "side")
+    list_filter = ("side", "topic")
