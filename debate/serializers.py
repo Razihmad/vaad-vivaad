@@ -23,7 +23,7 @@ class TopicSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Topic
-        fields = ["id", "title", "description", "category", "background_image", "is_trending"]
+        fields = ["id", "title", "description", "category", "background_image", "is_trending" , "pro_context", "con_context"]
 
 
 class MessageSerializer(serializers.ModelSerializer):
