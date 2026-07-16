@@ -1,6 +1,8 @@
+from typing import Optional
+
 from django.contrib.auth.models import User
 
-from users.models import TopicComment, UserDevice, UserFeedback, UserProfile
+from users.models import TopicComment, TopicVote, UserDevice, UserFeedback, UserProfile
 from users.selectors import create_topic_comment, create_user_feedback
 
 
@@ -21,6 +23,20 @@ def add_topic_comment(
         comment=comment,
         side=side,
     )
+
+
+def cast_topic_vote(*, user: User, topic_id: int, side: str) -> Optional[TopicVote]:
+    """Tapping the side you've already voted removes your vote; tapping the
+    other side switches it. Mirrors the toggle behaviour the app's vote
+    buttons already have."""
+    existing = TopicVote.objects.filter(topic_id=topic_id, user=user).first()
+    if existing and existing.side == side:
+        existing.delete()
+        return None
+    vote, _ = TopicVote.objects.update_or_create(
+        topic_id=topic_id, user=user, defaults={"side": side}
+    )
+    return vote
 
 
 def register_device(

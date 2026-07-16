@@ -8,13 +8,22 @@ from base.response import status_200, status_400
 
 from users.serializers import (
     TopicCommentSerializer,
+    TopicVoteSerializer,
     UserDeviceSerializer,
     UserFeedbackSerializer,
     UserProfileSerializer,
 )
-from users.selectors import get_leaderboard, get_user_feedbacks, get_user_profile
+from users.selectors import (
+    get_leaderboard,
+    get_topic_comments,
+    get_topic_vote_summary,
+    get_user_feedbacks,
+    get_user_profile,
+    get_user_profile_by_id,
+)
 from users.services import (
     add_topic_comment,
+    cast_topic_vote,
     create_feedback,
     register_device,
     update_user_profile,
@@ -55,6 +64,22 @@ class GetUserProfileView(APIView):
         return status_200(message="Profile updated successfully")
 
 
+class UserProfileByIdView(APIView):
+    """Read-only: view another user's profile. No edit/logout — that's only
+    ever done on your own profile via ``GetUserProfileView``."""
+
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    @handle_exception
+    def get(self, request, user_id):
+        user_profile = get_user_profile_by_id(user_id=user_id)
+        return status_200(
+            message="User profile fetched",
+            data={"user": UserProfileSerializer(user_profile).data},
+        )
+
+
 class FeedbackView(APIView):
     authentication_classes = [JWTAuthentication]
     permission_classes = [IsAuthenticated]
@@ -89,6 +114,17 @@ class TopicCommentView(APIView):
     permission_classes = [IsAuthenticated]
 
     @handle_exception
+    def get(self, request):
+        topic_id = request.GET.get("topic_id")
+        if not topic_id:
+            return status_400(message="topic_id is required")
+        comments = get_topic_comments(topic_id=topic_id)
+        return status_200(
+            message="Comments fetched",
+            data={"comments": TopicCommentSerializer(comments, many=True).data},
+        )
+
+    @handle_exception
     def post(self, request):
         serializer = TopicCommentSerializer(data=request.data)
         if not serializer.is_valid():
@@ -103,6 +139,34 @@ class TopicCommentView(APIView):
             message="Comment submitted",
             data={"comment": TopicCommentSerializer(comment).data},
         )
+
+
+class TopicVoteView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    @handle_exception
+    def get(self, request):
+        topic_id = request.GET.get("topic_id")
+        if not topic_id:
+            return status_400(message="topic_id is required")
+        summary = get_topic_vote_summary(topic_id=topic_id, user_id=request.user.id)
+        return status_200(message="Votes fetched", data=summary)
+
+    @handle_exception
+    def post(self, request):
+        serializer = TopicVoteSerializer(data=request.data)
+        if not serializer.is_valid():
+            return status_400(message="Invalid data", data=serializer.errors)
+        cast_topic_vote(
+            user=request.user,
+            topic_id=serializer.validated_data["topic"].id,
+            side=serializer.validated_data["side"],
+        )
+        summary = get_topic_vote_summary(
+            topic_id=serializer.validated_data["topic"].id, user_id=request.user.id
+        )
+        return status_200(message="Vote recorded", data=summary)
 
 
 class LeaderboardView(APIView):

@@ -65,6 +65,22 @@ class TopicComment(models.Model):
         return f"{self.user.username} - {self.topic.title} ({self.side})"
 
 
+class TopicVote(models.Model):
+    topic = models.ForeignKey(Topic, on_delete=models.CASCADE, related_name="votes")
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="topic_votes")
+    side = models.CharField(max_length=20, choices=ProOrCon.choices)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["topic", "user"], name="unique_topic_user_vote")
+        ]
+
+    def __str__(self):
+        return f"{self.user.username} - {self.topic.title} ({self.side})"
+
+
 class ApplicationConfig(models.Model):
     name = models.CharField(max_length=256)
     properties = models.JSONField(default=dict)

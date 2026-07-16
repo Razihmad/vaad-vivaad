@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth.models import User
-from users.models import TopicComment, UserDevice, UserFeedback, UserProfile
+from users.models import TopicComment, TopicVote, UserDevice, UserFeedback, UserProfile
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -41,7 +41,15 @@ class UserDeviceSerializer(serializers.ModelSerializer):
 
 
 class TopicCommentSerializer(serializers.ModelSerializer):
+    user = UserSerializer(read_only=True)
+
     class Meta:
         model = TopicComment
-        fields = ["id", "topic", "comment", "side", "created_at"]
-        read_only_fields = ["id", "created_at"]
+        fields = ["id", "topic", "user", "comment", "side", "created_at"]
+        read_only_fields = ["id", "user", "created_at"]
+
+
+class TopicVoteSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TopicVote
+        fields = ["topic", "side"]

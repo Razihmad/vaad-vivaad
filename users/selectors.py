@@ -1,15 +1,17 @@
-from typing import List
+from typing import Dict, List, Optional
 
 from django.contrib.auth.models import User
 from django.db import models
 from django.utils import timezone
 from datetime import timedelta
 
-from debate.constants import DebateStatus
+from base.exception import ServiceException
+from debate.constants import DebateStatus, ProOrCon
 from debate.models import Debate
 from users.models import (
     ApplicationConfig,
     TopicComment,
+    TopicVote,
     UserDevice,
     UserFeedback,
     UserProfile,
@@ -20,6 +22,13 @@ WEEKLY_WINDOW = timedelta(days=7)
 
 def get_user_profile(*, user_id: int) -> UserProfile:
     return UserProfile.objects.get(user_id=user_id)
+
+
+def get_user_profile_by_id(*, user_id: int) -> UserProfile:
+    try:
+        return UserProfile.objects.select_related("user").get(user_id=user_id)
+    except UserProfile.DoesNotExist:
+        raise ServiceException(message="User not found")
 
 
 def get_active_user_devices(*, user_id: int) -> list[UserDevice]:
@@ -54,6 +63,38 @@ def create_topic_comment(
         comment=comment,
         side=side,
     )
+
+
+def get_topic_comments(*, topic_id: int) -> List[TopicComment]:
+    return list(
+        TopicComment.objects.filter(topic_id=topic_id).select_related("user")
+    )
+
+
+def get_topic_vote_counts(*, topic_id: int) -> Dict[str, int]:
+    counts = {ProOrCon.PRO: 0, ProOrCon.CON: 0}
+    rows = (
+        TopicVote.objects.filter(topic_id=topic_id)
+        .values("side")
+        .annotate(count=models.Count("id"))
+    )
+    for row in rows:
+        counts[row["side"]] = row["count"]
+    return counts
+
+
+def get_user_topic_vote(*, topic_id: int, user_id: int) -> Optional[TopicVote]:
+    return TopicVote.objects.filter(topic_id=topic_id, user_id=user_id).first()
+
+
+def get_topic_vote_summary(*, topic_id: int, user_id: int) -> Dict:
+    counts = get_topic_vote_counts(topic_id=topic_id)
+    my_vote = get_user_topic_vote(topic_id=topic_id, user_id=user_id)
+    return {
+        "pro_count": counts[ProOrCon.PRO],
+        "con_count": counts[ProOrCon.CON],
+        "my_vote": my_vote.side if my_vote else None,
+    }
 
 
 def get_application_config_by_name(*, name: str) -> ApplicationConfig:
