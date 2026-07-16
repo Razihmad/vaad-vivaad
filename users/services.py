@@ -2,8 +2,9 @@ from typing import Optional
 
 from django.contrib.auth.models import User
 
+from base.exception import ServiceException
 from users.models import TopicComment, TopicVote, UserDevice, UserFeedback, UserProfile
-from users.selectors import create_topic_comment, create_user_feedback
+from users.selectors import create_topic_comment, create_user_feedback, get_topic_comment
 
 
 def create_feedback(
@@ -23,6 +24,13 @@ def add_topic_comment(
         comment=comment,
         side=side,
     )
+
+
+def delete_topic_comment(*, user: User, comment_id: int) -> None:
+    comment = get_topic_comment(comment_id=comment_id)
+    if comment.user_id != user.id:
+        raise ServiceException(message="You can only delete your own comment")
+    comment.delete()
 
 
 def cast_topic_vote(*, user: User, topic_id: int, side: str) -> Optional[TopicVote]:

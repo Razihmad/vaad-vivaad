@@ -71,6 +71,13 @@ def get_topic_comments(*, topic_id: int) -> List[TopicComment]:
     )
 
 
+def get_topic_comment(*, comment_id: int) -> TopicComment:
+    try:
+        return TopicComment.objects.select_related("user").get(id=comment_id)
+    except TopicComment.DoesNotExist:
+        raise ServiceException(message="Comment not found")
+
+
 def get_topic_vote_counts(*, topic_id: int) -> Dict[str, int]:
     counts = {ProOrCon.PRO: 0, ProOrCon.CON: 0}
     rows = (

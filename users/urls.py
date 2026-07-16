@@ -4,6 +4,7 @@ from users.views import (
     FeedbackView,
     GetUserProfileView,
     LeaderboardView,
+    TopicCommentDetailView,
     TopicCommentView,
     TopicVoteView,
     UserProfileByIdView,
@@ -16,5 +17,6 @@ urlpatterns = [
     path("feedback/", FeedbackView.as_view(), name="feedback"),
     path("devices/register/", DeviceRegistrationView.as_view(), name="device-register"),
     path("topics/comments/", TopicCommentView.as_view(), name="topic-comment"),
+    path("topics/comments/<int:comment_id>/", TopicCommentDetailView.as_view(), name="topic-comment-detail"),
     path("topics/votes/", TopicVoteView.as_view(), name="topic-vote"),
 ]

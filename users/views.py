@@ -25,6 +25,7 @@ from users.services import (
     add_topic_comment,
     cast_topic_vote,
     create_feedback,
+    delete_topic_comment,
     register_device,
     update_user_profile,
 )
@@ -139,6 +140,16 @@ class TopicCommentView(APIView):
             message="Comment submitted",
             data={"comment": TopicCommentSerializer(comment).data},
         )
+
+
+class TopicCommentDetailView(APIView):
+    authentication_classes = [JWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    @handle_exception
+    def delete(self, request, comment_id):
+        delete_topic_comment(user=request.user, comment_id=comment_id)
+        return status_200(message="Comment deleted")
 
 
 class TopicVoteView(APIView):
