@@ -4,6 +4,7 @@ from asgiref.sync import async_to_sync
 from celery import shared_task
 from channels.layers import get_channel_layer
 
+from debate.constants import DebateStatus
 from debate.serializers import JudgementSerializer, MessageSerializer, RoundSerializer
 
 
@@ -45,6 +46,11 @@ def abandon_debate_if_still_disconnected(
     against) or if a later disconnect superseded this one."""
     from debate.selectors import get_participant_disconnected_at
     from debate.services import abandon_debate_and_schedule_judgement
+    from debate.selectors import get_debate_by_id
+
+    debate = get_debate_by_id(debate_id=debate_id)
+    if debate.status in (DebateStatus.MATCHED, DebateStatus.ONGOING):
+        return
 
     marker = get_participant_disconnected_at(debate_id=debate_id, user_id=user_id)
     if marker is None or marker.isoformat() != disconnected_at:
