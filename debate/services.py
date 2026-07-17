@@ -455,10 +455,13 @@ def rejoin_active_debate(*, user: User, debate_id: int) -> dict:
     opponent_id = (
         debate.user_con_id if user.id == debate.user_pro_id else debate.user_pro_id
     )
+    messages = selectors.get_messages_by_debate_id(debate_id=debate.id)
     return {
         "outcome": "matched",
         "opponent_id": opponent_id,
         "debate": DebateListSerializer(debate).data,
+        "reconnected": True,
+        "rounds": serialize_messages_of_debate(messages=messages),
     }
 
 

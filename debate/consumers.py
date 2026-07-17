@@ -64,8 +64,13 @@ class DebateConsumer(AsyncWebsocketConsumer):
         {"type": "debate_completed"}   # client signals its round sequence has finished
 
     Server → Client events:
-        {"type": "queue.matched", "data": {"debate": {...}}}   # match found (also sent
-                                                                # to both sides on rejoin)
+        {"type": "queue.matched", "data": {"debate": {...}}}   # match found
+        {"type": "queue.matched", "data": {                    # sent only to the
+            "debate": {...}, "reconnected": true,              # rejoining client after
+            "rounds": [{"round_id", "round_type", "order",     # a reconnect — includes
+                        "started_at", "ended_at",               # the transcript so far
+                        "messages": [{...}]}, ...]              # so it can resync
+        }}
         {"type": "queue.waiting", "data": {"queue_id", "topic"}}  # wait for opponent
         {"type": "message.new",     "message":  {...}}
         {"type": "round.advanced",  "round":    {...}}
@@ -322,8 +327,17 @@ class DebateConsumer(AsyncWebsocketConsumer):
             self.opponent_id = outcome["opponent_id"]
             await self._add_to_debate_group(outcome["debate"]["id"])
 
+            # Reconnecting: tell this client explicitly (so it doesn't treat this as a
+            # brand new match) and hand back the transcript so far, so it can resync
+            # whatever it missed while disconnected. The opponent doesn't need this —
+            # they already have the transcript — so they only get the base payload below.
+            self_data = dict(data)
+            if outcome.get("reconnected"):
+                self_data["reconnected"] = True
+                self_data["rounds"] = outcome.get("rounds", [])
+
             await self.send(
-                text_data=json.dumps({"type": "queue.matched", "data": data})
+                text_data=json.dumps({"type": "queue.matched", "data": self_data})
             )
             # Opponent is not in debate_* yet, so they still get this over user_*
             await self.channel_layer.group_send(
