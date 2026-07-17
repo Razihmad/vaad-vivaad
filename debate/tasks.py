@@ -37,6 +37,22 @@ def start_judgement_of_debate_and_share_result(debate_id: int, group_name: str):
 
 
 @shared_task
+def abandon_debate_if_still_disconnected(
+    debate_id: int, user_id: int, disconnected_at: str, group_name: str
+) -> None:
+    """Fires ``DISCONNECT_GRACE_SECONDS`` after a participant's socket drops. No-ops if
+    they rejoined in the meantime (rejoining clears the marker this task compares
+    against) or if a later disconnect superseded this one."""
+    from debate.selectors import get_participant_disconnected_at
+    from debate.services import abandon_debate_and_schedule_judgement
+
+    marker = get_participant_disconnected_at(debate_id=debate_id, user_id=user_id)
+    if marker is None or marker.isoformat() != disconnected_at:
+        return
+    abandon_debate_and_schedule_judgement(debate_id=debate_id, group_name=group_name)
+
+
+@shared_task
 def assign_bot_if_no_match(queue_id: int) -> None:
     from debate.services import match_with_bot
 
