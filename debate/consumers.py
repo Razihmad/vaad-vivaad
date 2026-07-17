@@ -56,9 +56,11 @@ class DebateConsumer(AsyncWebsocketConsumer):
 
     Client → Server events:
         {"type": "message", "data": {"content": "..."}}
-        {"type": "join_queue", "data": {"topic_id": <int>}}  # also used to rejoin an
-                                                              # ongoing debate after a
-                                                              # reconnect — see below
+        {"type": "join_queue", "data": {"topic_id": <int>}}  # fresh matchmaking
+        {"type": "join_queue", "data": {"debate_id": <int>}}  # rejoin after a reconnect —
+                                                               # pass the debate_id the
+                                                               # client was in before the
+                                                               # drop; skips matchmaking
         {"type": "debate_completed"}   # client signals its round sequence has finished
 
     Server → Client events:
@@ -287,12 +289,14 @@ class DebateConsumer(AsyncWebsocketConsumer):
 
     @websocket_catch_service_exception(default_message="Could not join the queue")
     async def handle_join_queue(self, event_data: dict):
-        # Reconnecting mid-debate (e.g. within the disconnect grace window) takes
-        # priority over fresh matchmaking — rejoin the existing debate instead.
-        rejoin_outcome = await database_sync_to_async(rejoin_active_debate)(
-            user=self.user
-        )
-        if rejoin_outcome:
+        # Reconnecting mid-debate: client sends back the debate_id it was in (persisted
+        # locally before the drop). Only checked when it's actually provided — a plain
+        # join_queue for fresh matchmaking never has a debate_id.
+        debate_id = event_data.get("debate_id")
+        if debate_id is not None:
+            rejoin_outcome = await database_sync_to_async(rejoin_active_debate)(
+                user=self.user, debate_id=int(debate_id)
+            )
             await self.process_join_queue_outcome(rejoin_outcome)
             return
 

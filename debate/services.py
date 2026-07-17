@@ -440,14 +440,17 @@ def handle_ongoing_debate_disconnect(
     return "grace_period"
 
 
-def rejoin_active_debate(*, user: User) -> Optional[dict]:
-    """If the user already has a MATCHED/ONGOING debate — e.g. their app reconnected
-    within the disconnect grace period — clears their pending disconnect marker and
+def rejoin_active_debate(*, user: User, debate_id: int) -> dict:
+    """Called when a client reconnects mid-debate and supplies the debate_id it was in
+    (persisted locally before the drop). Clears the user's pending disconnect marker and
     returns the same shape ``join_queue_outcome`` returns for a fresh match, so the
     consumer can reuse ``process_join_queue_outcome`` to rejoin the debate group."""
-    debate = selectors.get_active_debate_for_participant(user_id=user.id)
+    debate = selectors.get_active_debate_for_user_and_id(
+        user_id=user.id, debate_id=debate_id
+    )
+    logger.info(f"{debate=}, {user.id=}")
     if not debate:
-        return None
+        raise ServiceException(message="Debate not found or no longer active")
     selectors.clear_participant_disconnected_at(debate_id=debate.id, user_id=user.id)
     opponent_id = (
         debate.user_con_id if user.id == debate.user_pro_id else debate.user_pro_id

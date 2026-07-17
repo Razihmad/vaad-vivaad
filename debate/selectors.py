@@ -417,12 +417,14 @@ def get_participant_disconnected_at(
     return getattr(debate, field)
 
 
-def get_active_debate_for_participant(*, user_id: int) -> Debate | None:
+def get_active_debate_for_user_and_id(*, user_id: int, debate_id: int) -> Debate | None:
     return (
         Debate.objects.select_related("topic", "user_pro", "user_con", "winner")
-        .filter(Q(user_pro_id=user_id) | Q(user_con_id=user_id))
-        .filter(status__in=[DebateStatus.MATCHED, DebateStatus.ONGOING])
-        .order_by("-started_at")
+        .filter(
+            Q(user_pro_id=user_id) | Q(user_con_id=user_id),
+            id=debate_id,
+            status__in=[DebateStatus.MATCHED, DebateStatus.ONGOING],
+        )
         .first()
     )
 
