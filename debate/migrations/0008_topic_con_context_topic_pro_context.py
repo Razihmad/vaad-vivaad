@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('debate', '0008_debate_user_con_disconnected_at_and_more'),
+        ('debate', '0007_topic_is_trending'),
     ]
 
     operations = [
