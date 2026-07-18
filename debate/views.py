@@ -156,7 +156,10 @@ class CategoryAndGroundRule(APIView):
     @handle_exception
     def get(self, request):
         categories = get_active_categories()
-        categories, rules = serialize_category_and_debate_rules(categories=categories)
+        categories, rules, debate_time = serialize_category_and_debate_rules(
+            categories=categories
+        )
         return status_200(
-            message="Fetch Categories", data={"categories": categories, "rules": rules}
+            message="Fetch Categories",
+            data={"categories": categories, "rules": rules, "debate_time": debate_time},
         )

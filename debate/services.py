@@ -800,13 +800,14 @@ def get_debate_ground_rules():
     )
     properties = config.properties if config else {}
     rules = properties.get("rules", [])
-    return rules
+    debate_time = properties.get("debate_time", 180)
+    return rules, debate_time
 
 
 def serialize_category_and_debate_rules(*, categories: List[Category]):
     categories_data = CategorySerializer(categories, many=True).data
-    debate_rules = get_debate_ground_rules()
-    return categories_data, debate_rules
+    debate_rules, debate_time = get_debate_ground_rules()
+    return categories_data, debate_rules, debate_time
 
 
 def get_user_debate_and_message(*, user: User, debate_id: int):
