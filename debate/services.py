@@ -34,8 +34,12 @@ from debate.serializers import (
     DebateListSerializer,
     TopicSerializer,
     serialize_messages_of_debate,
+    serialize_round_time,
 )
-from debate.tasks import start_judgement_of_debate_and_share_result
+from debate.tasks import (
+    check_rebuttal_deadline,
+    start_judgement_of_debate_and_share_result,
+)
 from users.constants import ApplicationConfigName
 from users.selectors import get_application_config_by_name
 
@@ -107,6 +111,7 @@ def _create_match(
         if pro_or_con == ProOrCon.PRO
         else (opponent_entry.user, user)
     )
+    _, debate_time_seconds = get_debate_ground_rules()
     return selectors.create_debate_for_queue_match(
         topic=topic,
         user=user,
@@ -115,6 +120,7 @@ def _create_match(
         user_con=user_con,
         pro_or_con_for_joiner=pro_or_con,
         matched_at=timezone.now(),
+        debate_time_seconds=debate_time_seconds,
     )
 
 
@@ -169,13 +175,16 @@ def _try_advance_from_opening(
         if first_msg
         else _speaker_order(debate=debate, round_type=RoundType.REBUTTAL)[0]
     )
-    return selectors.create_next_round(
+    next_round = selectors.create_next_round(
         debate=debate,
         round_type=RoundType.REBUTTAL,
         order=2,
         started_at=now,
         current_speaker=first_speaker,
     )
+    selectors.start_rebuttal_clock(debate=debate, seconds=debate.debate_time_seconds)
+    _schedule_rebuttal_deadline(debate=debate, round_obj=next_round, speaker=first_speaker)
+    return next_round
 
 
 def submit_message(*, user: User, debate_id: int, content: str) -> Message:
@@ -207,9 +216,17 @@ def submit_message(*, user: User, debate_id: int, content: str) -> Message:
     # In REBUTTAL: toggle the floor to the opponent after each human message
     if current_round.round_type == RoundType.REBUTTAL:
         opponent = debate.user_con if user.id == debate.user_pro.id else debate.user_pro
-        selectors.set_round_current_speaker(
-            round_obj=current_round, speaker=opponent, turn_started_at=timezone.now()
+        now = timezone.now()
+        elapsed = (
+            (now - current_round.turn_started_at).total_seconds()
+            if current_round.turn_started_at
+            else 0.0
         )
+        selectors.deduct_time_remaining(debate=debate, user=user, elapsed_seconds=elapsed)
+        selectors.set_round_current_speaker(
+            round_obj=current_round, speaker=opponent, turn_started_at=now
+        )
+        _schedule_rebuttal_deadline(debate=debate, round_obj=current_round, speaker=opponent)
     return message
 
 
@@ -246,6 +263,60 @@ def end_turn(*, user: User, debate_id: int) -> Optional[Round]:
         args=[debate.id, group_name], countdown=20
     )
     return None
+
+
+def expire_rebuttal_turn(
+    *,
+    debate_id: int,
+    round_id: int,
+    expected_turn_started_at: str,
+    timed_out_user_id: int,
+) -> bool:
+    """Fires when a scheduled rebuttal deadline elapses. No-ops if the turn already
+    moved on (a message arrived, End Turn was called, or the debate otherwise ended)
+    before the deadline fired — same staleness guard as
+    abandon_debate_if_still_disconnected. Returns True if the debate was genuinely
+    timed out by this call."""
+    debate = selectors.get_debate_by_id(debate_id=debate_id)
+    if not debate or debate.status != DebateStatus.ONGOING:
+        return False
+
+    current_round = selectors.get_current_round(debate=debate)
+    if not current_round or current_round.id != round_id or current_round.ended_at:
+        return False
+    if (
+        current_round.turn_started_at is None
+        or current_round.turn_started_at.isoformat() != expected_turn_started_at
+    ):
+        return False
+
+    timed_out_side = (
+        ProOrCon.PRO if timed_out_user_id == debate.user_pro_id else ProOrCon.CON
+    )
+    selectors.mark_round_ended(round_obj=current_round, ended_at=timezone.now())
+    selectors.set_timed_out_side(debate=debate, side=timed_out_side)
+    group_name = f"debate_{debate.id}"
+    start_judgement_of_debate_and_share_result.apply_async(
+        args=[debate.id, group_name], countdown=5
+    )
+    return True
+
+
+def _schedule_rebuttal_deadline(*, debate: Debate, round_obj: Round, speaker: User) -> None:
+    """(Re)schedules the deadline check for whoever's turn it now is. A stale check from
+    a previous turn no-ops in expire_rebuttal_turn since turn_started_at will no longer
+    match by the time it fires."""
+    remaining = selectors.get_time_remaining(debate=debate, user=speaker)
+    check_rebuttal_deadline.apply_async(
+        args=[
+            debate.id,
+            round_obj.id,
+            round_obj.turn_started_at.isoformat(),
+            speaker.id,
+            f"debate_{debate.id}",
+        ],
+        countdown=max(0, remaining),
+    )
 
 
 def _is_user_turn(*, debate: Debate, current_round: Round, user: User) -> bool:
@@ -319,6 +390,11 @@ def _build_transcript(debate: Debate) -> str:
             side = "Pro" if msg.user == debate.user_pro else "Con"
             lines.append(f"{side}: {msg.content}")
         lines.append("")
+    if debate.timed_out_side:
+        side_name = "Pro" if debate.timed_out_side == ProOrCon.PRO else "Con"
+        lines.append(
+            f"[Note: {side_name}'s rebuttal clock ran out before they could respond further.]"
+        )
     return "\n".join(lines)
 
 
@@ -372,18 +448,6 @@ def auto_judge_debate(*, debate_id: int) -> Optional[Judgement]:
             "Auto judging failed for debate %s: %s", debate.id, e, exc_info=True
         )
         return None
-
-
-def schedule_debate_judgement(*, debate_id: int, group_name: str) -> None:
-    """Called when the client signals a debate is complete; kicks off judging if it hasn't already been."""
-    debate = selectors.get_debate_by_id(debate_id=debate_id)
-    if not debate or debate.status != DebateStatus.ONGOING:
-        return
-    if selectors.judgement_exists_for_debate(debate_id=debate_id):
-        return
-    start_judgement_of_debate_and_share_result.apply_async(
-        args=[debate_id, group_name], countdown=5
-    )
 
 
 # ── Disconnect handling ──────────────────────────────────────────────────────
@@ -456,12 +520,14 @@ def rejoin_active_debate(*, user: User, debate_id: int) -> dict:
         debate.user_con_id if user.id == debate.user_pro_id else debate.user_pro_id
     )
     messages = selectors.get_messages_by_debate_id(debate_id=debate.id)
+    current_round = selectors.get_current_round(debate=debate)
     return {
         "outcome": "matched",
         "opponent_id": opponent_id,
         "debate": DebateListSerializer(debate).data,
         "reconnected": True,
         "rounds": serialize_messages_of_debate(messages=messages),
+        "round_time": serialize_round_time(debate=debate, round_obj=current_round),
     }
 
 
@@ -656,6 +722,10 @@ def _atomic_bot_submit(
                 started_at=now,
                 current_speaker=first_speaker,
             )
+            selectors.start_rebuttal_clock(debate=debate, seconds=debate.debate_time_seconds)
+            _schedule_rebuttal_deadline(
+                debate=debate, round_obj=next_round, speaker=first_speaker
+            )
             return message, next_round
         return message, None
 
@@ -663,9 +733,17 @@ def _atomic_bot_submit(
     human_user = (
         debate.user_con if bot_user.id == debate.user_pro.id else debate.user_pro
     )
-    selectors.set_round_current_speaker(
-        round_obj=current_round, speaker=human_user, turn_started_at=timezone.now()
+    now = timezone.now()
+    elapsed = (
+        (now - current_round.turn_started_at).total_seconds()
+        if current_round.turn_started_at
+        else 0.0
     )
+    selectors.deduct_time_remaining(debate=debate, user=bot_user, elapsed_seconds=elapsed)
+    selectors.set_round_current_speaker(
+        round_obj=current_round, speaker=human_user, turn_started_at=now
+    )
+    _schedule_rebuttal_deadline(debate=debate, round_obj=current_round, speaker=human_user)
     return message, None
 
 
@@ -752,12 +830,14 @@ def match_with_bot(*, queue_id: int) -> None:
         user_pro = bot_user
         user_con = entry.user
     now = timezone.now()
+    _, debate_time_seconds = get_debate_ground_rules()
 
     debate = Debate.objects.create(
         topic=entry.topic,
         user_pro=user_pro,
         user_con=user_con,
         status=DebateStatus.ONGOING,
+        debate_time_seconds=debate_time_seconds,
     )
     Round.objects.create(
         debate=debate,

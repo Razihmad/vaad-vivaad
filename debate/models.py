@@ -67,6 +67,16 @@ class Debate(models.Model):
     user_pro_disconnected_at = models.DateTimeField(null=True, blank=True)
     user_con_disconnected_at = models.DateTimeField(null=True, blank=True)
 
+    # Server-authoritative rebuttal chess clock. debate_time_seconds is the
+    # per-side budget snapshotted at creation; the remaining fields are set
+    # when REBUTTAL starts and decremented as turns rotate.
+    debate_time_seconds = models.IntegerField(default=180)
+    pro_time_remaining_seconds = models.FloatField(null=True, blank=True)
+    con_time_remaining_seconds = models.FloatField(null=True, blank=True)
+    timed_out_side = models.CharField(
+        max_length=20, choices=ProOrCon.choices, null=True, blank=True
+    )
+
     def __str__(self):
         return f"Debate #{self.id}: {self.topic.title}"
 

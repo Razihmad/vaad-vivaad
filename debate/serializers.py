@@ -1,8 +1,12 @@
-from typing import Dict, List
+from datetime import timedelta
+from typing import Dict, List, Optional
 from rest_framework import serializers
 from django.contrib.auth.models import User
+from django.utils import timezone
 
+from debate.constants import RoundType
 from debate.models import Debate, Round, Message, Judgement, MatchQueue, Topic, Category
+from debate.selectors import get_time_remaining
 from users.serializers import UserSerializer
 
 
@@ -150,6 +154,33 @@ class DebateViewerSerializer(serializers.Serializer):
 
     def get_debate_id(self, obj):
         return obj.debate_id
+
+
+def serialize_round_time(*, debate: Debate, round_obj: Optional[Round]) -> Optional[Dict]:
+    """Server-authoritative rebuttal chess clock snapshot. None outside REBUTTAL (or once
+    the round has ended) — the client's clock only runs during REBUTTAL."""
+    if not round_obj or round_obj.round_type != RoundType.REBUTTAL or round_obj.ended_at:
+        return None
+
+    speaker_id = round_obj.current_speaker_id
+    turn_deadline = None
+    if speaker_id and round_obj.turn_started_at:
+        speaker = debate.user_pro if speaker_id == debate.user_pro_id else debate.user_con
+        remaining = get_time_remaining(debate=debate, user=speaker)
+        turn_deadline = (
+            round_obj.turn_started_at + timedelta(seconds=remaining)
+        ).isoformat()
+
+    return {
+        "current_speaker_id": speaker_id,
+        "turn_started_at": round_obj.turn_started_at.isoformat()
+        if round_obj.turn_started_at
+        else None,
+        "turn_deadline": turn_deadline,
+        "pro_time_remaining_seconds": debate.pro_time_remaining_seconds,
+        "con_time_remaining_seconds": debate.con_time_remaining_seconds,
+        "server_now": timezone.now().isoformat(),
+    }
 
 
 def serialize_messages_of_debate(*, messages: List[Message]) -> List[Dict]:

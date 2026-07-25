@@ -205,6 +205,7 @@ def create_debate_for_queue_match(
     user_con: User,
     pro_or_con_for_joiner: ProOrCon,
     matched_at: datetime,
+    debate_time_seconds: int,
 ) -> MatchQueue:
     """Creates Debate, opening round, updates opponent entry, and joiner's match-queue row."""
     debate = Debate.objects.create(
@@ -212,6 +213,7 @@ def create_debate_for_queue_match(
         user_pro=user_pro,
         user_con=user_con,
         status=DebateStatus.ONGOING,
+        debate_time_seconds=debate_time_seconds,
     )
     Round.objects.create(
         debate=debate,
@@ -284,6 +286,42 @@ def set_round_current_speaker(
 
 def user_has_message_in_round(*, round_obj: Round, user: User) -> bool:
     return Message.objects.filter(round=round_obj, user=user).exists()
+
+
+# ── Rebuttal clock (server-authoritative chess clock) ───────────────────
+
+
+def get_time_remaining(*, debate: Debate, user: User) -> float:
+    remaining = (
+        debate.pro_time_remaining_seconds
+        if user.id == debate.user_pro_id
+        else debate.con_time_remaining_seconds
+    )
+    return remaining if remaining is not None else debate.debate_time_seconds
+
+
+def start_rebuttal_clock(*, debate: Debate, seconds: float) -> None:
+    debate.pro_time_remaining_seconds = seconds
+    debate.con_time_remaining_seconds = seconds
+    debate.save(update_fields=["pro_time_remaining_seconds", "con_time_remaining_seconds"])
+
+
+def deduct_time_remaining(*, debate: Debate, user: User, elapsed_seconds: float) -> None:
+    field = (
+        "pro_time_remaining_seconds"
+        if user.id == debate.user_pro_id
+        else "con_time_remaining_seconds"
+    )
+    current = getattr(debate, field)
+    if current is None:
+        current = debate.debate_time_seconds
+    setattr(debate, field, max(0.0, current - max(0.0, elapsed_seconds)))
+    debate.save(update_fields=[field])
+
+
+def set_timed_out_side(*, debate: Debate, side: ProOrCon) -> None:
+    debate.timed_out_side = side
+    debate.save(update_fields=["timed_out_side"])
 
 
 # ── Judgements (write) ────────────────────────────────────────────────

@@ -9,6 +9,8 @@ from base.decorators import websocket_catch_service_exception
 from base.exception import ServiceException
 from debate.constants import DebateStatus, DebateViewerStatus, MatchQueueStatus
 from debate.selectors import (
+    get_current_round,
+    get_debate_by_id,
     update_debate_status,
     update_debate_viewer_status,
     update_match_queue_status,
@@ -17,6 +19,7 @@ from debate.serializers import (
     DebateViewerSerializer,
     MessageSerializer,
     RoundSerializer,
+    serialize_round_time,
 )
 from debate.services import (
     DISCONNECT_GRACE_SECONDS,
@@ -30,7 +33,6 @@ from debate.services import (
     submit_message_and_maybe_advance,
     leave_queue,
     schedule_bot_response_if_needed,
-    schedule_debate_judgement,
 )
 from debate.tasks import send_advance_round_event
 
@@ -61,7 +63,7 @@ class DebateConsumer(AsyncWebsocketConsumer):
                                                                # pass the debate_id the
                                                                # client was in before the
                                                                # drop; skips matchmaking
-        {"type": "debate_completed"}   # client signals its round sequence has finished
+        {"type": "end_turn"}   # voluntarily end your rebuttal turn — ends the debate
 
     Server → Client events:
         {"type": "queue.matched", "data": {"debate": {...}}}   # match found
@@ -69,13 +71,19 @@ class DebateConsumer(AsyncWebsocketConsumer):
             "debate": {...}, "reconnected": true,              # rejoining client after
             "rounds": [{"round_id", "round_type", "order",     # a reconnect — includes
                         "started_at", "ended_at",               # the transcript so far
-                        "messages": [{...}]}, ...]              # so it can resync
+                        "messages": [{...}]}, ...],             # so it can resync
+            "round_time": {...} | null                         # server-authoritative
+                                                                # rebuttal clock state for
+                                                                # the current round, if any
         }}
         {"type": "queue.waiting", "data": {"queue_id", "topic"}}  # wait for opponent
-        {"type": "message.new",     "message":  {...}}
-        {"type": "round.advanced",  "round":    {...}}
-        {"type": "debate.judging"}
-        {"type": "debate.completed","judgement": {...}}
+        {"type": "message.new",     "message":  {...}, "round_time": {...} | null}
+        {"type": "round.advanced",  "round":    {...}, "round_time": {...} | null}
+        {"type": "debate.completed","data": {"timed_out_user_id": <int>}}  # server clock
+                                                                            # ran out — the
+                                                                            # authoritative
+                                                                            # end signal
+        {"type": "debate_result",   "data": {...judgement...}}
         {"type": "opponent.disconnected", "data": {
             "debate_id": <int>, "user_id": <int>, "abandoned": <bool>,
             "grace_seconds": <int|null>,  # set when the debate is only pending
@@ -199,7 +207,6 @@ class DebateConsumer(AsyncWebsocketConsumer):
             "join_viewer": self.handle_join_viewer,
             "viewer_left": self.viewer_left,
             "viewer_reaction": self.add_viewer_reaction,
-            "debate_completed": self.handle_debate_completed,
         }
 
     @websocket_catch_service_exception(default_message="Could not process the message")
@@ -243,16 +250,28 @@ class DebateConsumer(AsyncWebsocketConsumer):
             msg, nxt = submit_message_and_maybe_advance(
                 user=self.user, debate_id=debate_id, content=content
             )
-            return MessageSerializer(msg).data, (
-                RoundSerializer(nxt).data if nxt else None
+            debate = get_debate_by_id(debate_id=debate_id)
+            current_round = get_current_round(debate=debate) if debate else None
+            round_time = (
+                serialize_round_time(debate=debate, round_obj=current_round)
+                if debate
+                else None
+            )
+            return (
+                MessageSerializer(msg).data,
+                RoundSerializer(nxt).data if nxt else None,
+                round_time,
             )
 
-        message_data, round_data = await database_sync_to_async(_submit_and_serialize)()
+        message_data, round_data, round_time = await database_sync_to_async(
+            _submit_and_serialize
+        )()
         await self._group_send(
             self.debate_group_name,
             {
                 "type": "message.new",
                 "message": message_data,
+                "round_time": round_time,
             },
         )
         if round_data:
@@ -261,7 +280,7 @@ class DebateConsumer(AsyncWebsocketConsumer):
                 f"scheduling send_advance_round_event group={self.debate_group_name}"
             )
             send_advance_round_event.apply_async(
-                args=[self.debate_group_name, round_data],
+                args=[self.debate_group_name, round_data, round_time],
                 countdown=1,
             )
         await database_sync_to_async(schedule_bot_response_if_needed)(
@@ -462,7 +481,11 @@ class DebateConsumer(AsyncWebsocketConsumer):
         """In-debate broadcast from ``group_send`` (type ``message.new``)."""
         await self.send(
             text_data=json.dumps(
-                {"type": "message.new", "message": event.get("message", {})}
+                {
+                    "type": "message.new",
+                    "message": event.get("message", {}),
+                    "round_time": event.get("round_time"),
+                }
             )
         )
 
@@ -531,29 +554,27 @@ class DebateConsumer(AsyncWebsocketConsumer):
         """Forward round.advance group message → client as round.advanced."""
         await self.send(
             text_data=json.dumps(
-                {"type": "round.advanced", "round": event.get("data", {})}
+                {
+                    "type": "round.advanced",
+                    "round": event.get("data", {}),
+                    "round_time": event.get("round_time"),
+                }
             )
         )
 
     async def debate_result(self, event):
-        """Forward judgement group message → client as debate.completed."""
+        """Forward judgement group message → client as debate_result."""
         await self.send(
             text_data=json.dumps(
                 {"type": "debate_result", "data": event.get("data", {})}
             )
         )
 
-    @websocket_catch_service_exception(
-        default_message="Could not process debate completion"
-    )
-    async def handle_debate_completed(self, event_data: dict):
-        if not self.debate_id or not self.debate_group_name:
-            await self._send_error("No active debate")
-            return
-        logger.info(
-            f"user_id={self.user.id} debate_id={self.debate_id} "
-            f"scheduling debate judgement group={self.debate_group_name}"
-        )
-        await database_sync_to_async(schedule_debate_judgement)(
-            debate_id=self.debate_id, group_name=self.debate_group_name
+    async def debate_completed(self, event):
+        """Forward the server-authoritative 'debate is over' group message (sent by
+        check_rebuttal_deadline when a rebuttal clock genuinely expires) → client."""
+        await self.send(
+            text_data=json.dumps(
+                {"type": "debate.completed", "data": event.get("data", {})}
+            )
         )

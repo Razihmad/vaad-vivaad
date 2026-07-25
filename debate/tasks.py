@@ -5,17 +5,22 @@ from celery import shared_task
 from channels.layers import get_channel_layer
 
 from debate.constants import DebateStatus
-from debate.serializers import JudgementSerializer, MessageSerializer, RoundSerializer
+from debate.serializers import (
+    JudgementSerializer,
+    MessageSerializer,
+    RoundSerializer,
+)
 
 
 @shared_task
-def send_advance_round_event(group_name: str, data: dict) -> None:
+def send_advance_round_event(group_name: str, data: dict, round_time: dict | None = None) -> None:
     channel_layer = get_channel_layer()
     async_to_sync(channel_layer.group_send)(
         group_name,
         {
             "type": "round.advance",
             "data": data,
+            "round_time": round_time,
         },
     )
 
@@ -59,6 +64,37 @@ def abandon_debate_if_still_disconnected(
 
 
 @shared_task
+def check_rebuttal_deadline(
+    debate_id: int,
+    round_id: int,
+    expected_turn_started_at: str,
+    timed_out_user_id: int,
+    group_name: str,
+) -> None:
+    """Fires exactly when a rebuttal turn's deadline should elapse (scheduled with
+    countdown=<remaining seconds> every time the turn starts/rotates). No-ops if the
+    turn already moved on in the meantime — see expire_rebuttal_turn."""
+    from debate.services import expire_rebuttal_turn
+
+    expired = expire_rebuttal_turn(
+        debate_id=debate_id,
+        round_id=round_id,
+        expected_turn_started_at=expected_turn_started_at,
+        timed_out_user_id=timed_out_user_id,
+    )
+    if not expired:
+        return
+    channel_layer = get_channel_layer()
+    async_to_sync(channel_layer.group_send)(
+        group_name,
+        {
+            "type": "debate.completed",
+            "data": {"timed_out_user_id": timed_out_user_id},
+        },
+    )
+
+
+@shared_task
 def assign_bot_if_no_match(queue_id: int) -> None:
     from debate.services import match_with_bot
 
@@ -73,6 +109,7 @@ def bot_respond(debate_id: int) -> None:
         _is_user_turn,
     )
     from debate.selectors import get_debate_by_id, get_current_round
+    from debate.serializers import serialize_round_time
 
     result = generate_and_submit_bot_message(debate_id=debate_id)
     if not result:
@@ -82,21 +119,33 @@ def bot_respond(debate_id: int) -> None:
     channel_layer = get_channel_layer()
     debate_group = f"debate_{debate_id}"
 
+    debate = get_debate_by_id(debate_id=debate_id)
+    current_round = get_current_round(debate=debate) if debate else None
+    round_time = (
+        serialize_round_time(debate=debate, round_obj=current_round) if debate else None
+    )
+
     async_to_sync(channel_layer.group_send)(
         debate_group,
-        {"type": "message.new", "message": MessageSerializer(message).data},
+        {
+            "type": "message.new",
+            "message": MessageSerializer(message).data,
+            "round_time": round_time,
+        },
     )
     if not next_round:
         return
     async_to_sync(channel_layer.group_send)(
         debate_group,
-        {"type": "round.advance", "data": RoundSerializer(next_round).data},
+        {
+            "type": "round.advance",
+            "data": RoundSerializer(next_round).data,
+            "round_time": round_time,
+        },
     )
     # Check whether the bot goes first in the new round (e.g. CON opens CLOSING)
-    debate = get_debate_by_id(debate_id=debate_id)
     if debate:
         bot_user = get_bot_user_in_debate(debate=debate)
-        current_round = get_current_round(debate=debate)
         if (
             bot_user
             and current_round
