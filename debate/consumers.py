@@ -347,6 +347,7 @@ class DebateConsumer(AsyncWebsocketConsumer):
                     "data": data,
                 },
             )
+            logger.info(f"{data=}, {self.user.id=}, {self.opponent_id=}")
         else:
             await self.send(
                 text_data=json.dumps(
