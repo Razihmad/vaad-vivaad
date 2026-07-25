@@ -100,10 +100,11 @@ class DebateConsumer(AsyncWebsocketConsumer):
         self.debate_group_name = None
         self.is_viewer = False
 
-        await self.channel_layer.group_add(self.user_group_name, self.channel_name)
+        await self._group_add(self.user_group_name, reason="connect")
         await self.accept()
         logger.info(
-            f"{self.user.id=}, {self.app_version=}, {self.user_group_name=} connected successfully"
+            f"user_id={self.user.id} app_version={self.app_version} "
+            f"group={self.user_group_name} connected successfully"
         )
 
     async def disconnect(self, close_code):
@@ -113,14 +114,10 @@ class DebateConsumer(AsyncWebsocketConsumer):
         await self.viewer_left(data={"status": DebateViewerStatus.DISCONNECTED})
         await self.handle_participant_disconnect(close_code)
         if getattr(self, "debate_group_name", None):
-            await self.channel_layer.group_discard(
-                self.debate_group_name, self.channel_name
-            )
+            await self._group_discard(self.debate_group_name, reason="disconnect")
         if hasattr(self, "user_group_name"):
-            await self.channel_layer.group_discard(
-                self.user_group_name, self.channel_name
-            )
-        logger.info(f"disconnected {close_code=}")
+            await self._group_discard(self.user_group_name, reason="disconnect")
+        logger.info(f"user_id={self.user.id} disconnected close_code={close_code}")
 
     async def handle_participant_disconnect(self, close_code):
         """Covers a participant's socket closing mid-debate (``handle_leave_queue`` can't
@@ -144,9 +141,10 @@ class DebateConsumer(AsyncWebsocketConsumer):
         if outcome == "noop":
             return
         logger.info(
-            f"debate {self.debate_id}: user {self.user.id} disconnected ({close_code=}) -> {outcome}"
+            f"user_id={self.user.id} debate_id={self.debate_id} "
+            f"participant_disconnect close_code={close_code} outcome={outcome}"
         )
-        await self.channel_layer.group_send(
+        await self._group_send(
             self.debate_group_name,
             {
                 "type": "opponent.disconnected",
@@ -164,11 +162,31 @@ class DebateConsumer(AsyncWebsocketConsumer):
     async def _send_error(self, message: str):
         await self.send(text_data=json.dumps({"type": "error", "message": message}))
 
+    # ── Group helpers (logged) ──────────────────────────────────────────────
+    async def _group_add(self, group_name: str, reason: str = ""):
+        logger.info(
+            f"user_id={self.user.id} group_add group={group_name} reason={reason}"
+        )
+        await self.channel_layer.group_add(group_name, self.channel_name)
+
+    async def _group_discard(self, group_name: str, reason: str = ""):
+        logger.info(
+            f"user_id={self.user.id} group_discard group={group_name} reason={reason}"
+        )
+        await self.channel_layer.group_discard(group_name, self.channel_name)
+
+    async def _group_send(self, group_name: str, event: dict):
+        logger.info(
+            f"user_id={self.user.id} group_send group={group_name} "
+            f"event_type={event.get('type')} event={event}"
+        )
+        await self.channel_layer.group_send(group_name, event)
+
     async def _add_to_debate_group(self, debate_id: int) -> None:
         """Subscribes this connection to the shared group for that debate (both users)."""
         self.debate_id = debate_id
         self.debate_group_name = DEBATE_GROUP.format(debate_id=debate_id)
-        await self.channel_layer.group_add(self.debate_group_name, self.channel_name)
+        await self._group_add(self.debate_group_name, reason=f"debate_id={debate_id}")
 
     # ── Incoming messages ─────────────────────────────────────────────────────
     def event_mapping(self) -> Dict[str, Callable]:
@@ -197,7 +215,9 @@ class DebateConsumer(AsyncWebsocketConsumer):
 
         event_type = payload.get("type")
         event_data = payload.get("data") or {}
-        logger.info(f"{payload=}")
+        logger.info(
+            f"user_id={self.user.id} event_received type={event_type} data={event_data}"
+        )
         try:
             handler = self.event_mapping()[event_type]
         except KeyError:
@@ -228,7 +248,7 @@ class DebateConsumer(AsyncWebsocketConsumer):
             )
 
         message_data, round_data = await database_sync_to_async(_submit_and_serialize)()
-        await self.channel_layer.group_send(
+        await self._group_send(
             self.debate_group_name,
             {
                 "type": "message.new",
@@ -236,6 +256,10 @@ class DebateConsumer(AsyncWebsocketConsumer):
             },
         )
         if round_data:
+            logger.info(
+                f"user_id={self.user.id} debate_id={debate_id} "
+                f"scheduling send_advance_round_event group={self.debate_group_name}"
+            )
             send_advance_round_event.apply_async(
                 args=[self.debate_group_name, round_data],
                 countdown=1,
@@ -257,6 +281,10 @@ class DebateConsumer(AsyncWebsocketConsumer):
 
         round_data = await database_sync_to_async(_end_turn_and_serialize)()
         if round_data:
+            logger.info(
+                f"user_id={self.user.id} debate_id={debate_id} "
+                f"scheduling send_advance_round_event group={self.debate_group_name}"
+            )
             send_advance_round_event.apply_async(
                 args=[self.debate_group_name, round_data],
                 countdown=1,
@@ -269,7 +297,7 @@ class DebateConsumer(AsyncWebsocketConsumer):
     async def handle_typing(self, event_data: dict):
         if not self.debate_id or not self.debate_group_name:
             return
-        await self.channel_layer.group_send(
+        await self._group_send(
             self.debate_group_name,
             {
                 "type": "opponent.typing",
@@ -299,6 +327,9 @@ class DebateConsumer(AsyncWebsocketConsumer):
         # join_queue for fresh matchmaking never has a debate_id.
         debate_id = event_data.get("debate_id")
         if debate_id is not None:
+            logger.info(
+                f"user_id={self.user.id} rejoin_active_debate debate_id={debate_id}"
+            )
             rejoin_outcome = await database_sync_to_async(rejoin_active_debate)(
                 user=self.user, debate_id=int(debate_id)
             )
@@ -312,7 +343,10 @@ class DebateConsumer(AsyncWebsocketConsumer):
         pro_or_con = await database_sync_to_async(get_pro_or_con)(
             pro_or_con=pro_or_con, topic_id=topic_id, category_id=category_id
         )
-        logger.info(f"{self.user.id=}, {pro_or_con=}")
+        logger.info(
+            f"user_id={self.user.id} join_queue topic_id={topic_id} "
+            f"pro_or_con={pro_or_con} category_id={category_id}"
+        )
         outcome = await database_sync_to_async(join_queue_outcome)(
             user=self.user,
             topic_id=topic_id,
@@ -339,15 +373,18 @@ class DebateConsumer(AsyncWebsocketConsumer):
             await self.send(
                 text_data=json.dumps({"type": "queue.matched", "data": self_data})
             )
+            logger.info(
+                f"user_id={self.user.id} opponent_id={self.opponent_id} "
+                f"queue.matched sent to self debate_id={outcome['debate']['id']}"
+            )
             # Opponent is not in debate_* yet, so they still get this over user_*
-            await self.channel_layer.group_send(
+            await self._group_send(
                 f"user_{outcome['opponent_id']}",
                 {
                     "type": "queue.matched",
                     "data": data,
                 },
             )
-            logger.info(f"{data=}, {self.user.id=}, {self.opponent_id=}")
         else:
             await self.send(
                 text_data=json.dumps(
@@ -369,7 +406,7 @@ class DebateConsumer(AsyncWebsocketConsumer):
             return
         if self.debate_id:
             await self.process_and_update_status_on_leave()
-            await self.channel_layer.group_send(
+            await self._group_send(
                 self.debate_group_name,
                 {
                     "type": "queue.left",
@@ -380,12 +417,10 @@ class DebateConsumer(AsyncWebsocketConsumer):
                     },
                 },
             )
-            await self.channel_layer.group_discard(
-                self.user_group_name, self.channel_name
-            )
+            await self._group_discard(self.user_group_name, reason="leave_queue")
 
     async def process_and_update_status_on_leave(self):
-        logger.info(f"User {self.user.id} left the queue")
+        logger.info(f"user_id={self.user.id} debate_id={self.debate_id} left the queue")
         await database_sync_to_async(update_debate_status)(
             debate_id=self.debate_id, status=DebateStatus.ABANDONED
         )
@@ -402,9 +437,7 @@ class DebateConsumer(AsyncWebsocketConsumer):
 
     async def queue_left(self, event):
         # TODO: what to do with opponent? once the debate is abandoned
-        await self.channel_layer.group_discard(
-            self.debate_group_name, self.channel_name
-        )
+        await self._group_discard(self.debate_group_name, reason="queue_left")
         self.debate_id = None
         self.debate_group_name = None
         self.opponent_id = None
@@ -445,6 +478,10 @@ class DebateConsumer(AsyncWebsocketConsumer):
         )
         self.viewer_id = debate_viewer.id
         self.is_viewer = True
+        logger.info(
+            f"user_id={self.user.id} debate_id={debate_id} "
+            f"joined as viewer viewer_id={self.viewer_id}"
+        )
         await self.send(
             text_data=json.dumps(
                 {
@@ -460,13 +497,15 @@ class DebateConsumer(AsyncWebsocketConsumer):
 
         status = data.get("status", DebateViewerStatus.LEFT)
 
-        await self.channel_layer.group_discard(
-            self.debate_group_name, self.channel_name
+        logger.info(
+            f"user_id={self.user.id} debate_id={self.debate_id} "
+            f"viewer_id={getattr(self, 'viewer_id', None)} viewer_left status={status}"
         )
+        await self._group_discard(self.debate_group_name, reason="viewer_left")
         await database_sync_to_async(update_debate_viewer_status)(
             id=self.viewer_id, status=status
         )
-        await self.channel_layer.group_send(
+        await self._group_send(
             self.debate_group_name,
             {
                 "type": "viewer_left",
@@ -480,6 +519,10 @@ class DebateConsumer(AsyncWebsocketConsumer):
 
         reaction = data.get("reaction")
         message_id = data.get("message_id")
+        logger.info(
+            f"user_id={self.user.id} debate_id={self.debate_id} "
+            f"viewer_reaction reaction={reaction} message_id={message_id}"
+        )
         await database_sync_to_async(check_and_add_user_reaction)(
             user=self.user, reaction=reaction, message_id=message_id
         )
@@ -507,6 +550,10 @@ class DebateConsumer(AsyncWebsocketConsumer):
         if not self.debate_id or not self.debate_group_name:
             await self._send_error("No active debate")
             return
+        logger.info(
+            f"user_id={self.user.id} debate_id={self.debate_id} "
+            f"scheduling debate judgement group={self.debate_group_name}"
+        )
         await database_sync_to_async(schedule_debate_judgement)(
             debate_id=self.debate_id, group_name=self.debate_group_name
         )

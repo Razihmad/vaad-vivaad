@@ -1,3 +1,5 @@
+import logging
+
 from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from rest_framework_simplejwt.authentication import JWTAuthentication
@@ -27,6 +29,8 @@ from debate.serializers import (
     JudgementSerializer,
     MessageSerializer,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class TopicListView(APIView):
@@ -77,6 +81,10 @@ class DebateDetailView(APIView):
     def get(self, request, debate_id):
         debate = get_debate(debate_id=debate_id)
         if request.user not in (debate.user_pro, debate.user_con):
+            logger.info(
+                f"user_id={request.user.id} debate_id={debate_id} "
+                f"denied debate detail: not a participant"
+            )
             return status_400(message="You are not a participant in this debate")
         return status_200(
             message="Debate fetched", data=DebateDetailSerializer(debate).data
@@ -127,6 +135,10 @@ class JudgementView(APIView):
     def get(self, request, debate_id):
         debate = get_debate(debate_id=debate_id)
         if request.user not in (debate.user_pro, debate.user_con):
+            logger.info(
+                f"user_id={request.user.id} debate_id={debate_id} "
+                f"denied judgement: not a participant"
+            )
             return status_400(message="You are not a participant in this debate")
         try:
             judgement = Judgement.objects.select_related("winner").get(debate=debate)
@@ -143,7 +155,14 @@ class DisputeView(APIView):
 
     @handle_exception
     def post(self, request, debate_id):
+        logger.info(
+            f"user_id={request.user.id} debate_id={debate_id} dispute requested"
+        )
         judgement = dispute_judgement(user=request.user, debate_id=debate_id)
+        logger.info(
+            f"user_id={request.user.id} debate_id={debate_id} "
+            f"dispute processed judgement_id={judgement.id} winner_id={judgement.winner_id}"
+        )
         return status_200(
             message="Dispute processed", data=JudgementSerializer(judgement).data
         )
