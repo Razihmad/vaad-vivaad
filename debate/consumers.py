@@ -382,7 +382,7 @@ class DebateConsumer(AsyncWebsocketConsumer):
                 f"user_{outcome['opponent_id']}",
                 {
                     "type": "queue.matched",
-                    "data": data,
+                    "data": self_data,
                 },
             )
         else:
