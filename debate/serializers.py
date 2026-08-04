@@ -27,7 +27,16 @@ class TopicSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Topic
-        fields = ["id", "title", "description", "category", "background_image", "is_trending" , "pro_context", "con_context"]
+        fields = [
+            "id",
+            "title",
+            "description",
+            "category",
+            "background_image",
+            "is_trending",
+            "pro_context",
+            "con_context",
+        ]
 
 
 class MessageSerializer(serializers.ModelSerializer):
@@ -156,16 +165,24 @@ class DebateViewerSerializer(serializers.Serializer):
         return obj.debate_id
 
 
-def serialize_round_time(*, debate: Debate, round_obj: Optional[Round]) -> Optional[Dict]:
+def serialize_round_time(
+    *, debate: Debate, round_obj: Optional[Round]
+) -> Optional[Dict]:
     """Server-authoritative rebuttal chess clock snapshot. None outside REBUTTAL (or once
     the round has ended) — the client's clock only runs during REBUTTAL."""
-    if not round_obj or round_obj.round_type != RoundType.REBUTTAL or round_obj.ended_at:
+    if (
+        not round_obj
+        or round_obj.round_type != RoundType.REBUTTAL
+        or round_obj.ended_at
+    ):
         return None
 
     speaker_id = round_obj.current_speaker_id
     turn_deadline = None
     if speaker_id and round_obj.turn_started_at:
-        speaker = debate.user_pro if speaker_id == debate.user_pro_id else debate.user_con
+        speaker = (
+            debate.user_pro if speaker_id == debate.user_pro_id else debate.user_con
+        )
         remaining = get_time_remaining(debate=debate, user=speaker)
         turn_deadline = (
             round_obj.turn_started_at + timedelta(seconds=remaining)

@@ -66,9 +66,7 @@ def create_topic_comment(
 
 
 def get_topic_comments(*, topic_id: int) -> List[TopicComment]:
-    return list(
-        TopicComment.objects.filter(topic_id=topic_id).select_related("user")
-    )
+    return list(TopicComment.objects.filter(topic_id=topic_id).select_related("user"))
 
 
 def get_topic_comment(*, comment_id: int) -> TopicComment:
@@ -114,7 +112,9 @@ def get_user_by_id(*, user_id: int) -> User:
 
 def get_weekly_active_user_ids() -> set[int]:
     since = timezone.now() - WEEKLY_WINDOW
-    debates = Debate.objects.filter(status=DebateStatus.COMPLETED, completed_at__gte=since)
+    debates = Debate.objects.filter(
+        status=DebateStatus.COMPLETED, completed_at__gte=since
+    )
     pro_ids = debates.values_list("user_pro_id", flat=True)
     con_ids = debates.values_list("user_con_id", flat=True)
     return set(pro_ids) | set(con_ids)

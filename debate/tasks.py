@@ -13,7 +13,9 @@ from debate.serializers import (
 
 
 @shared_task
-def send_advance_round_event(group_name: str, data: dict, round_time: dict | None = None) -> None:
+def send_advance_round_event(
+    group_name: str, data: dict, round_time: dict | None = None
+) -> None:
     channel_layer = get_channel_layer()
     async_to_sync(channel_layer.group_send)(
         group_name,

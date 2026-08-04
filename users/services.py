@@ -4,7 +4,11 @@ from django.contrib.auth.models import User
 
 from base.exception import ServiceException
 from users.models import TopicComment, TopicVote, UserDevice, UserFeedback, UserProfile
-from users.selectors import create_topic_comment, create_user_feedback, get_topic_comment
+from users.selectors import (
+    create_topic_comment,
+    create_user_feedback,
+    get_topic_comment,
+)
 
 
 def create_feedback(
@@ -63,7 +67,12 @@ def register_device(
 
 
 def update_user_profile(
-    *, user_id: int, username: str = None, bio: str = None, name: str = None, profile_pic=None
+    *,
+    user_id: int,
+    username: str = None,
+    bio: str = None,
+    name: str = None,
+    profile_pic=None,
 ):
     user_updates = {}
     if username is not None:

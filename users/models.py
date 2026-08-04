@@ -74,7 +74,9 @@ class TopicVote(models.Model):
 
     class Meta:
         constraints = [
-            models.UniqueConstraint(fields=["topic", "user"], name="unique_topic_user_vote")
+            models.UniqueConstraint(
+                fields=["topic", "user"], name="unique_topic_user_vote"
+            )
         ]
 
     def __str__(self):

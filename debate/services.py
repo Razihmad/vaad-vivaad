@@ -183,7 +183,9 @@ def _try_advance_from_opening(
         current_speaker=first_speaker,
     )
     selectors.start_rebuttal_clock(debate=debate, seconds=debate.debate_time_seconds)
-    _schedule_rebuttal_deadline(debate=debate, round_obj=next_round, speaker=first_speaker)
+    _schedule_rebuttal_deadline(
+        debate=debate, round_obj=next_round, speaker=first_speaker
+    )
     return next_round
 
 
@@ -222,11 +224,15 @@ def submit_message(*, user: User, debate_id: int, content: str) -> Message:
             if current_round.turn_started_at
             else 0.0
         )
-        selectors.deduct_time_remaining(debate=debate, user=user, elapsed_seconds=elapsed)
+        selectors.deduct_time_remaining(
+            debate=debate, user=user, elapsed_seconds=elapsed
+        )
         selectors.set_round_current_speaker(
             round_obj=current_round, speaker=opponent, turn_started_at=now
         )
-        _schedule_rebuttal_deadline(debate=debate, round_obj=current_round, speaker=opponent)
+        _schedule_rebuttal_deadline(
+            debate=debate, round_obj=current_round, speaker=opponent
+        )
     return message
 
 
@@ -302,7 +308,9 @@ def expire_rebuttal_turn(
     return True
 
 
-def _schedule_rebuttal_deadline(*, debate: Debate, round_obj: Round, speaker: User) -> None:
+def _schedule_rebuttal_deadline(
+    *, debate: Debate, round_obj: Round, speaker: User
+) -> None:
     """(Re)schedules the deadline check for whoever's turn it now is. A stale check from
     a previous turn no-ops in expire_rebuttal_turn since turn_started_at will no longer
     match by the time it fires."""
@@ -723,7 +731,9 @@ def _atomic_bot_submit(
                 started_at=now,
                 current_speaker=first_speaker,
             )
-            selectors.start_rebuttal_clock(debate=debate, seconds=debate.debate_time_seconds)
+            selectors.start_rebuttal_clock(
+                debate=debate, seconds=debate.debate_time_seconds
+            )
             _schedule_rebuttal_deadline(
                 debate=debate, round_obj=next_round, speaker=first_speaker
             )
@@ -740,11 +750,15 @@ def _atomic_bot_submit(
         if current_round.turn_started_at
         else 0.0
     )
-    selectors.deduct_time_remaining(debate=debate, user=bot_user, elapsed_seconds=elapsed)
+    selectors.deduct_time_remaining(
+        debate=debate, user=bot_user, elapsed_seconds=elapsed
+    )
     selectors.set_round_current_speaker(
         round_obj=current_round, speaker=human_user, turn_started_at=now
     )
-    _schedule_rebuttal_deadline(debate=debate, round_obj=current_round, speaker=human_user)
+    _schedule_rebuttal_deadline(
+        debate=debate, round_obj=current_round, speaker=human_user
+    )
     return message, None
 
 

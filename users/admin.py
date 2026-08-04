@@ -2,7 +2,13 @@ from django.contrib import admin
 from unfold.admin import ModelAdmin
 
 # Register your models here.
-from users.models import UserDevice, UserProfile, ApplicationConfig, TopicComment, TopicVote
+from users.models import (
+    UserDevice,
+    UserProfile,
+    ApplicationConfig,
+    TopicComment,
+    TopicVote,
+)
 
 
 @admin.register(UserDevice)

@@ -303,10 +303,14 @@ def get_time_remaining(*, debate: Debate, user: User) -> float:
 def start_rebuttal_clock(*, debate: Debate, seconds: float) -> None:
     debate.pro_time_remaining_seconds = seconds
     debate.con_time_remaining_seconds = seconds
-    debate.save(update_fields=["pro_time_remaining_seconds", "con_time_remaining_seconds"])
+    debate.save(
+        update_fields=["pro_time_remaining_seconds", "con_time_remaining_seconds"]
+    )
 
 
-def deduct_time_remaining(*, debate: Debate, user: User, elapsed_seconds: float) -> None:
+def deduct_time_remaining(
+    *, debate: Debate, user: User, elapsed_seconds: float
+) -> None:
     field = (
         "pro_time_remaining_seconds"
         if user.id == debate.user_pro_id
