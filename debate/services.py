@@ -636,6 +636,7 @@ def get_or_create_bot_user() -> User:
             "is_active": True,
         },
     )
+    logger.info(f"{user.username=} {user.id=}, {created=}")
     if created:
         from users.models import UserProfile
 
