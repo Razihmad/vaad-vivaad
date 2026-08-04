@@ -57,8 +57,8 @@ def create_user_by_google_data(*, data: Dict) -> Tuple[User, bool]:
         return existing_user, False
 
     user_data = {
-        "first_name": data.pop("given_name", None),
-        "last_name": data.pop("family_name", None),
+        "first_name": data.pop("given_name", ""),
+        "last_name": data.pop("family_name", ""),
     }
     username = _generate_unique_username(fallback_email=email)
     user = create_user(email=email, username=username, extra_data=user_data)
