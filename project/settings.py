@@ -120,6 +120,13 @@ DATABASES = {
         "PASSWORD": os.getenv("DB_PASSWORD", "mypassword"),
         "HOST": os.getenv("DB_HOST", "localhost"),
         "PORT": os.getenv("DB_PORT", "5432"),
+        "OPTIONS": {
+            "pool": {
+                "min_size": int(os.getenv("DB_POOL_MIN_SIZE", "2")),
+                "max_size": int(os.getenv("DB_POOL_MAX_SIZE", "10")),
+                "timeout": int(os.getenv("DB_POOL_TIMEOUT_SECONDS", "10")),
+            },
+        },
     }
 }
 
