@@ -243,7 +243,8 @@ class DebateConsumer(AsyncWebsocketConsumer):
     @websocket_catch_service_exception(default_message="Could not submit the message")
     async def handle_message_submit(self, content: str):
         if self.is_viewer:
-            self._send_error(message="You cant send message to this deabate")
+            await self._send_error(message="You cant send message to this deabate")
+            return
         debate_id = self.debate_id
 
         def _submit_and_serialize():
@@ -339,6 +340,15 @@ class DebateConsumer(AsyncWebsocketConsumer):
             text_data=json.dumps({"type": "opponent.disconnected", "data": data})
         )
 
+    async def opponent_connected(self, event):
+        """Forward connect notification to the client, skipping the connector."""
+        data = event.get("data", {})
+        if data.get("user_id") == self.user.id:
+            return
+        await self.send(
+            text_data=json.dumps({"type": "opponent.connected", "data": data})
+        )
+
     @websocket_catch_service_exception(default_message="Could not join the queue")
     async def handle_join_queue(self, event_data: dict):
         # Reconnecting mid-debate: client sends back the debate_id it was in (persisted
@@ -388,6 +398,14 @@ class DebateConsumer(AsyncWebsocketConsumer):
             if outcome.get("reconnected"):
                 self_data["reconnected"] = True
                 self_data["rounds"] = outcome.get("rounds", [])
+
+                await self._group_send(
+                    self.debate_group_name,
+                    {
+                        "type": "opponent.connected",
+                        "data": {"user_id": self.user.id},
+                    },
+                )
 
             await self.send(
                 text_data=json.dumps({"type": "queue.matched", "data": self_data})
