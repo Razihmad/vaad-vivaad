@@ -514,7 +514,7 @@ def update_debate_viewer_status(*, id: int, status: DebateViewerStatus):
 def is_user_debate_viewer(*, user_id: int, debate_id: int) -> bool:
     return DebateViewer.objects.filter(
         user_id=user_id, debate_id=debate_id, status=DebateViewerStatus.JOINED
-    ).exist()
+    ).exists()
 
 
 def add_viewer_reaction(

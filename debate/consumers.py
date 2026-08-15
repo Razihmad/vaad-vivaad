@@ -207,6 +207,7 @@ class DebateConsumer(AsyncWebsocketConsumer):
             "join_viewer": self.handle_join_viewer,
             "viewer_left": self.viewer_left,
             "viewer_reaction": self.add_viewer_reaction,
+            "ping": self.handle_ping,
         }
 
     @websocket_catch_service_exception(default_message="Could not process the message")
@@ -553,6 +554,10 @@ class DebateConsumer(AsyncWebsocketConsumer):
                 "data": {},
             },
         )
+
+    async def handle_ping(self, event_data: dict):
+        await self.send(text_data=json.dumps({"type": "pong"}))
+
 
     async def add_viewer_reaction(self, data: Dict):
         if not self.is_viewer:

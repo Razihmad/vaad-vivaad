@@ -56,7 +56,7 @@ def abandon_debate_if_still_disconnected(
     from debate.selectors import get_debate_by_id
 
     debate = get_debate_by_id(debate_id=debate_id)
-    if debate.status in (DebateStatus.MATCHED, DebateStatus.ONGOING):
+    if debate.status not in (DebateStatus.MATCHED, DebateStatus.ONGOING):
         return
 
     marker = get_participant_disconnected_at(debate_id=debate_id, user_id=user_id)
