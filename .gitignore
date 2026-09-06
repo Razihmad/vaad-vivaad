@@ -212,3 +212,4 @@ rabbitmq/
 CLAUDE.md
 service-account-key.json
 media/
+.DS_Store

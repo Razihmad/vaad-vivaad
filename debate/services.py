@@ -766,6 +766,7 @@ def generate_and_submit_bot_message(
     *, debate_id: int
 ) -> Optional[tuple[Message, Optional[Round]]]:
     from debate.utils.bot_client import bot_client
+    from debate.utils.openai_bot_client import openai_bot_client
 
     debate = selectors.get_debate_by_id(debate_id=debate_id)
     if not debate or debate.status != DebateStatus.ONGOING:
@@ -788,7 +789,10 @@ def generate_and_submit_bot_message(
     side = "PRO" if bot_user == debate.user_pro else "CON"
     history = _build_bot_history(debate=debate, bot_user=bot_user)
 
-    argument = bot_client.generate(
+    provider = get_bot_config().get("provider", "anthropic")
+    ai_client = openai_bot_client if provider == "openai" else bot_client
+
+    argument = ai_client.generate(
         topic=debate.topic.title,
         description=debate.topic.description,
         side=side,
