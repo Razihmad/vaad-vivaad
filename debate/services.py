@@ -408,10 +408,13 @@ def _build_transcript(debate: Debate) -> str:
 
 def _call_judge(*, debate: Debate) -> dict:
     from debate.utils.claude_client import judge_client
+    from debate.utils.openai_judge_client import openai_judge_client
 
     transcript = _build_transcript(debate=debate)
     config = get_debate_judge_config()
-    return judge_client.judge(transcript=transcript, judge_config=config)
+    provider = config.get("provider", "anthropic")
+    ai_client = openai_judge_client if provider == "openai" else judge_client
+    return ai_client.judge(transcript=transcript, judge_config=config)
 
 
 def dispute_judgement(*, user: User, debate_id: int) -> Judgement:
